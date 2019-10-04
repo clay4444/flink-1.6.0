@@ -108,6 +108,9 @@ public class RpcTest {
 
 		helloEndpoint.start();  //这个方法实际上会调用代理对象RpcServer的start方法，最终调用 InvocationHandler 的start方法，所以启动 RpcEndpoint 实际上就是向当前 endpoint 绑定的 Actor 发送一条 START 消息，通知服务启动。
 
+		//------------------------------------------------------------------------------------------------------------------------------------
+		// 		这种是在服务端本地同一个jvm中的方法的调用方式，需要注意的就是此时构造的RpcServer代理对象和invocationHandler，只供本地同一个jvm中进行方法调用；
+		//------------------------------------------------------------------------------------------------------------------------------------
 		//获取 endpoint 的 self gateway
 		HelloGateway helloGateway = helloEndpoint.getSelfGateway(HelloGateway.class); // getSelfGateway 返回一个代理对象；
 		String hello = helloGateway.hello(); //调用代理对象的方法，
@@ -115,8 +118,19 @@ public class RpcTest {
 
 		System.out.println(hello);
 
-		hiEndpoint.start();
+		hiEndpoint.start();  //服务端启动的；
+
+		//------------------------------------------------------------------------------
+		// 		这种是在服务端启动之后，客户端去远程进行rpc调用；注意一定要和上面的区分来看；
+		//------------------------------------------------------------------------------
+
 		// 通过 endpoint 的地址获得一个远程对象的代理
+		//connect方法内部会返回一个 **远程服务端的** 代理对象，但是这个对象只代理 HiGateway 这个接口的方法；
+		//具体一点，根据address获取服务端启动的 ActorRef，然后构造一个AkkaInvocationHandler(含有服务端的actor)，然后返回一个Proxy代理对象，之后方法的调用结果通过AkkaInvocationHandler向服务端的actor发消息来获得；
+
+		//@TODO HiRpcEndpoint hiEndpoint = new HiRpcEndpoint(rpcService); hiEndpoint.start(); 应该是在远程启动的，那客户端如何获得这个hiEndpoint，然后调用 hiEndpoint.getAddress() 呢？
+		//大概理解了，这里使用hiEndpoint.getAddress()迷惑性太大，这个address地址可以通过LeaderRetrievalService等方法获得，真正的分布式环境下，客户端肯定是无法直接使用hiEndpoint.getAddress()来获取address地址的；
+
 		HiGateway hiGateway = rpcService.connect(hiEndpoint.getAddress(),HiGateway.class).get();
 		String hi = hiGateway.hi();
 		//assertEquals("hi", hi);

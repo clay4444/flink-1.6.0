@@ -159,12 +159,12 @@ public class AkkaRpcService implements RpcService {
 		return connectInternal(
 			address,
 			clazz,
-			(ActorRef actorRef) -> {
+			(ActorRef actorRef) -> {  //接收一个ActorRef作为参数，返回一个 InvocationHandler
 				Tuple2<String, String> addressHostname = extractAddressHostname(actorRef);
 
 				return new AkkaInvocationHandler(
-					addressHostname.f0,
-					addressHostname.f1,
+					addressHostname.f0,  //address
+					addressHostname.f1,  //hostname
 					actorRef,
 					timeout,
 					maximumFramesize,
@@ -422,7 +422,7 @@ public class AkkaRpcService implements RpcService {
 		LOG.debug("Try to connect to remote RPC endpoint with address {}. Returning a {} gateway.",
 			address, clazz.getName());
 
-		final ActorSelection actorSel = actorSystem.actorSelection(address);
+		final ActorSelection actorSel = actorSystem.actorSelection(address); //akka.tcp://flink@192.168.199.144:53632/user/40fba30d-5646-4220-ac31-097d504f7435
 
 		final Future<ActorIdentity> identify = Patterns
 			.ask(actorSel, new Identify(42), timeout.toMilliseconds())
@@ -430,6 +430,7 @@ public class AkkaRpcService implements RpcService {
 
 		final CompletableFuture<ActorIdentity> identifyFuture = FutureUtils.toJava(identify);
 
+		//获取 actor 的引用 ActorRef
 		final CompletableFuture<ActorRef> actorRefFuture = identifyFuture.thenApply(
 			(ActorIdentity actorIdentity) -> {
 				if (actorIdentity.getRef() == null) {
@@ -439,16 +440,18 @@ public class AkkaRpcService implements RpcService {
 				}
 			});
 
+		//发送握手消息
 		final CompletableFuture<HandshakeSuccessMessage> handshakeFuture = actorRefFuture.thenCompose(
 			(ActorRef actorRef) -> FutureUtils.toJava(
 				Patterns
 					.ask(actorRef, new RemoteHandshakeMessage(clazz, getVersion()), timeout.toMilliseconds())
 					.<HandshakeSuccessMessage>mapTo(ClassTag$.MODULE$.<HandshakeSuccessMessage>apply(HandshakeSuccessMessage.class))));
 
+		//返回一个代理对象
 		return actorRefFuture.thenCombineAsync(
 			handshakeFuture,
 			(ActorRef actorRef, HandshakeSuccessMessage ignored) -> {
-				InvocationHandler invocationHandler = invocationHandlerFactory.apply(actorRef);
+				InvocationHandler invocationHandler = invocationHandlerFactory.apply(actorRef); //找到刚才创建的invocationHandler，
 
 				// Rather than using the System ClassLoader directly, we derive the ClassLoader
 				// from this class . That works better in cases where Flink runs embedded and all Flink
@@ -456,7 +459,7 @@ public class AkkaRpcService implements RpcService {
 				ClassLoader classLoader = getClass().getClassLoader();
 
 				@SuppressWarnings("unchecked")
-				C proxy = (C) Proxy.newProxyInstance(
+				C proxy = (C) Proxy.newProxyInstance(  //又返回一个代理对象；
 					classLoader,
 					new Class<?>[]{clazz},
 					invocationHandler);
