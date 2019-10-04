@@ -28,6 +28,7 @@ import java.util.Collection;
 import java.util.List;
 
 /**
+ * 这个Transformation表示如何对输入的元素进行 Partition 打散
  * This transformation represents a change of partitioning of the input elements.
  *
  * <p>This does not create a physical operation, it only affects how upstream operations are

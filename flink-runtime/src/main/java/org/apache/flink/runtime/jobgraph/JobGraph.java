@@ -45,6 +45,9 @@ import java.util.Set;
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /**
+ * JobGraph 代表一个底层的，可以被jm接收的 Flink 数据流转程序，
+ * 所有的高级别api job 都会被转化为 JobGraph
+ *
  * The JobGraph represents a Flink dataflow program, at the low level that the JobManager accepts.
  * All programs from higher level APIs are transformed into JobGraphs.
  *
@@ -62,7 +65,7 @@ public class JobGraph implements Serializable {
 	// --- job and configuration ---
 
 	/** List of task vertices included in this job graph. */
-	private final Map<JobVertexID, JobVertex> taskVertices = new LinkedHashMap<JobVertexID, JobVertex>();
+	private final Map<JobVertexID, JobVertex> taskVertices = new LinkedHashMap<JobVertexID, JobVertex>();   //保存所有的 JobVertex， JobGraph中和DAG 相关的好像只有这个； 逆序排序，
 
 	/** The job configuration attached to this job. */
 	private final Configuration jobConfiguration = new Configuration();
@@ -94,10 +97,10 @@ public class JobGraph implements Serializable {
 	/** Savepoint restore settings. */
 	private SavepointRestoreSettings savepointRestoreSettings = SavepointRestoreSettings.none();
 
-	// --- attached resources ---
+	// --- attached resources ---  附加资源
 
 	/** Set of JAR files required to run this job. */
-	private final List<Path> userJars = new ArrayList<Path>();
+	private final List<Path> userJars = new ArrayList<Path>();     //跑这个Flink程序需要的所有jar包；  #####看看是否可以从这里入手#####
 
 	/** Set of custom files required to run this job. */
 	private final Map<String, DistributedCache.DistributedCacheEntry> userArtifacts = new HashMap<>();
@@ -106,7 +109,7 @@ public class JobGraph implements Serializable {
 	private final List<PermanentBlobKey> userJarBlobKeys = new ArrayList<>();
 
 	/** List of classpaths required to run this job. */
-	private List<URL> classpaths = Collections.emptyList();
+	private List<URL> classpaths = Collections.emptyList();   //跑这个Flink程序需要的classpath
 
 	// --------------------------------------------------------------------------------------------
 

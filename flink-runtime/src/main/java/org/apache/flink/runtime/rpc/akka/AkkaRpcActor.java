@@ -70,16 +70,18 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  * discarded.
  *
  * @param <T> Type of the {@link RpcEndpoint}
+ *
+ *   每一个 RpcEndpoint 都对应一个 AkkaRpcActor！！！！
  */
 class AkkaRpcActor<T extends RpcEndpoint & RpcGateway> extends UntypedActor {
 
 	protected final Logger log = LoggerFactory.getLogger(getClass());
 
 	/** the endpoint to invoke the methods on. */
-	protected final T rpcEndpoint;
+	protected final T rpcEndpoint;   //具体的服务实现者，也就是 被代理类；
 
 	/** the helper that tracks whether calls come from the main thread. */
-	private final MainThreadValidatorUtil mainThreadValidator;
+	private final MainThreadValidatorUtil mainThreadValidator;   //确保同一个 RpcEndpoint 的所有 RPC 调用都会在同一个线程（RpcEndpoint 的“主线程”）中执行，因此无需担心并发执行的线程安全问题。
 
 	private final CompletableFuture<Boolean> terminationFuture;
 
@@ -127,16 +129,20 @@ class AkkaRpcActor<T extends RpcEndpoint & RpcGateway> extends UntypedActor {
 		}
 	}
 
+	/**
+	 * 消息处理的入口；
+	 * @param message
+	 */
 	@Override
 	public void onReceive(final Object message) {
 		if (message instanceof RemoteHandshakeMessage) {
 			handleHandshakeMessage((RemoteHandshakeMessage) message);
-		} else if (message.equals(Processing.START)) {
+		} else if (message.equals(Processing.START)) {    //处理START消息
 			state = State.STARTED;
-		} else if (message.equals(Processing.STOP)) {
+		} else if (message.equals(Processing.STOP)) {    //处理STOP消息
 			state = State.STOPPED;
 		} else if (state == State.STARTED) {
-			mainThreadValidator.enterMainThread();
+			mainThreadValidator.enterMainThread();  //状态为start之后，就设置死一个执行线程，确保以后的方法调用都在同一个线程中，避免线程安全的问题；
 
 			try {
 				handleRpcMessage(message);
@@ -158,7 +164,7 @@ class AkkaRpcActor<T extends RpcEndpoint & RpcGateway> extends UntypedActor {
 			handleRunAsync((RunAsync) message);
 		} else if (message instanceof CallAsync) {
 			handleCallAsync((CallAsync) message);
-		} else if (message instanceof RpcInvocation) {
+		} else if (message instanceof RpcInvocation) {   //RpcInvocation rpc 方法调用
 			handleRpcInvocation((RpcInvocation) message);
 		} else {
 			log.warn(
@@ -206,15 +212,18 @@ class AkkaRpcActor<T extends RpcEndpoint & RpcGateway> extends UntypedActor {
 	 * to the sender of the call.
 	 *
 	 * @param rpcInvocation Rpc invocation message
+	 *
+	 * 处理RpcInvocation消息，方式是直接调用 创建这个Actor时指定的 RpcEndpoint 的 RpcInvocation 中指定的方法，参数也在RpcInvocation中保存着，
+	 * 也就是直接调RpcEndpoint中的相应方法；
 	 */
 	private void handleRpcInvocation(RpcInvocation rpcInvocation) {
 		Method rpcMethod = null;
 
 		try {
-			String methodName = rpcInvocation.getMethodName();
-			Class<?>[] parameterTypes = rpcInvocation.getParameterTypes();
+			String methodName = rpcInvocation.getMethodName();     //要调用的方法名
+			Class<?>[] parameterTypes = rpcInvocation.getParameterTypes();    //要传递的参数
 
-			rpcMethod = lookupRpcMethod(methodName, parameterTypes);
+			rpcMethod = lookupRpcMethod(methodName, parameterTypes); //寻找对应的方法
 		} catch (ClassNotFoundException e) {
 			log.error("Could not load method arguments.", e);
 
@@ -237,11 +246,11 @@ class AkkaRpcActor<T extends RpcEndpoint & RpcGateway> extends UntypedActor {
 				// this supports declaration of anonymous classes
 				rpcMethod.setAccessible(true);
 
-				if (rpcMethod.getReturnType().equals(Void.TYPE)) {
+				if (rpcMethod.getReturnType().equals(Void.TYPE)) {  //方法的返回值为空，直接方法调用即可，不用把结果 tell 给sender
 					// No return value to send back
 					rpcMethod.invoke(rpcEndpoint, rpcInvocation.getArgs());
 				}
-				else {
+				else {						//方法有返回值的情况，需要对sender tell
 					final Object result;
 					try {
 						result = rpcMethod.invoke(rpcEndpoint, rpcInvocation.getArgs());

@@ -36,6 +36,7 @@ import java.util.List;
 
 /**
  * Class representing the operators in the streaming programs, with all their properties.
+ * 代表流作业中的一个Operator，包括这个Operator一些必要的属性；
  */
 @Internal
 public class StreamNode implements Serializable {
@@ -44,7 +45,7 @@ public class StreamNode implements Serializable {
 
 	private transient StreamExecutionEnvironment env;
 
-	private final int id;
+	private final int id; //id 一般直接取StreamTransformation 的id，所以不会重复
 	private Integer parallelism = null;
 	/**
 	 * Maximum parallelism for this stream node. The maximum parallelism is the upper limit for
@@ -54,23 +55,25 @@ public class StreamNode implements Serializable {
 	private ResourceSpec minResources = ResourceSpec.DEFAULT;
 	private ResourceSpec preferredResources = ResourceSpec.DEFAULT;
 	private Long bufferTimeout = null;
-	private final String operatorName;
+	private final String operatorName;   //operatorName
 	private String slotSharingGroup;
 	private @Nullable String coLocationGroup;
 	private KeySelector<?, ?> statePartitioner1;
 	private KeySelector<?, ?> statePartitioner2;
 	private TypeSerializer<?> stateKeySerializer;
 
+	//** 封装着用户代码；
 	private transient StreamOperator<?> operator;
+
 	private List<OutputSelector<?>> outputSelectors;
 	private TypeSerializer<?> typeSerializerIn1;
 	private TypeSerializer<?> typeSerializerIn2;
 	private TypeSerializer<?> typeSerializerOut;
 
-	private List<StreamEdge> inEdges = new ArrayList<StreamEdge>();
-	private List<StreamEdge> outEdges = new ArrayList<StreamEdge>();
+	private List<StreamEdge> inEdges = new ArrayList<StreamEdge>();  //入的边
+	private List<StreamEdge> outEdges = new ArrayList<StreamEdge>();  //出的边
 
-	private final Class<? extends AbstractInvokable> jobVertexClass;
+	private final Class<? extends AbstractInvokable> jobVertexClass;    //TM可以执行执行的Task类型  SourceStreamTask / OneInputStreamTask / TwoInputStreamTask ...
 
 	private InputFormat<?, ?> inputFormat;
 

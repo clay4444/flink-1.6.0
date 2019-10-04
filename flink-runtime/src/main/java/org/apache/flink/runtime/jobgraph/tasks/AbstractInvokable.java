@@ -35,7 +35,7 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  * 所有拓展的子类都需要提供一个如下的构造器，MyTask(Environment, TaskStateSnapshot)，无状态的任务为了方便可以实现 MyTask(Environment)
  *
  *
- * 所有需要支持状态恢复 和 参与 checkpoint 的作业都需要覆盖实现triggerCheckpoint、triggerCheckpointOnBarrier、
+ * 所有需要支持状态恢复 和 参与 checkpoint 的作业都需要覆盖实现triggerCheckpoint、triggerCheckpointOnBarrier、abortCheckpointOnBarrier、notifyCheckpointComplete
  *
  *
  * This is the abstract base class for every task that can be executed by a TaskManager.

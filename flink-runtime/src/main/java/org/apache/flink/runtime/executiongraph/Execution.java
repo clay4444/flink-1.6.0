@@ -125,10 +125,10 @@ public class Execution implements AccessExecution, Archiveable<ArchivedExecution
 	private final Executor executor;
 
 	/** The execution vertex whose task this execution executes. */
-	private final ExecutionVertex vertex;
+	private final ExecutionVertex vertex;        //具体执行哪个 ExecutionVertex[ExecutionJobVertex的一个subtask] 的task
 
 	/** The unique ID marking the specific execution instant of the task. */
-	private final ExecutionAttemptID attemptId;
+	private final ExecutionAttemptID attemptId;  //通过 ExecutionAttemptID 来唯一标识一次执行；
 
 	/** Gets the global modification version of the execution graph when this execution was created.
 	 * This version is bumped in the ExecutionGraph whenever a global failover happens. It is used

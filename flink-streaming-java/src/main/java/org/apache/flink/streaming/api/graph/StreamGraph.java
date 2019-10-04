@@ -86,14 +86,16 @@ public class StreamGraph extends StreamingPlan {
 
 	private boolean chaining;
 
-	private Map<Integer, StreamNode> streamNodes;
+	private Map<Integer, StreamNode> streamNodes;  //保存所有的 StreamNode，一个StreamNode代表一个算子,  <id,StreamNode>
 
 	private Set<Integer> sources;  //source顶点id，为什么用Set？ 因为一个flink任务可能有多个DAG，所以也就有多个Source；
   	private Set<Integer> sinks;   //sink顶点id 同理；
 
 	private Map<Integer, Tuple2<Integer, List<String>>> virtualSelectNodes;
 	private Map<Integer, Tuple2<Integer, OutputTag>> virtualSideOutputNodes;
-	private Map<Integer, Tuple2<Integer, StreamPartitioner<?>>> virtualPartitionNodes;
+
+
+	private Map<Integer, Tuple2<Integer, StreamPartitioner<?>>> virtualPartitionNodes;  //虚拟的partition节点   <新生成的虚拟算子id，< 连接的上游算子id，partitioner > >
 
 	protected Map<Integer, String> vertexIDtoBrokerID;
 	protected Map<Integer, Long> vertexIDtoLoopTimeout;
@@ -174,9 +176,9 @@ public class StreamGraph extends StreamingPlan {
 		TypeInformation<IN> inTypeInfo,
 		TypeInformation<OUT> outTypeInfo,
 		String operatorName) {
-		addOperator(vertexID, slotSharingGroup, coLocationGroup, operatorObject, inTypeInfo, outTypeInfo, operatorName);
+		addOperator(vertexID, slotSharingGroup, coLocationGroup, operatorObject, inTypeInfo, outTypeInfo, operatorName);  // 加StreamNode
 
-		sources.add(vertexID);
+		sources.add(vertexID); //标记source
 	}
 
 	public <IN, OUT> void addSink(Integer vertexID,
@@ -191,7 +193,7 @@ public class StreamGraph extends StreamingPlan {
 	}
 
 	/**
-	 * 最通用，增加一个算子，
+	 * 最通用，增加一个算子，addSource 和 addSink 都会调到这个方法；
 	 * @param vertexID				顶点id = 取StreamTransformation的id ( 每一个StreamTransformation有一个id，且不会重复 )
 	 * @param slotSharingGroup
 	 * @param coLocationGroup
@@ -214,7 +216,8 @@ public class StreamGraph extends StreamingPlan {
 		if (operatorObject instanceof StoppableStreamSource) {
 			addNode(vertexID, slotSharingGroup, coLocationGroup, StoppableSourceStreamTask.class, operatorObject, operatorName);
 		} else if (operatorObject instanceof StreamSource) {
-			//SourceStreamTask，是tm上具体执行的Task，这个直接传过去是？作用应该是标记一下 要构建的这个StreamNode的具体StreamTask类型？
+
+			//SourceStreamTask，是tm上具体执行的Task，这个直接传过去一个Class是？作用应该是标记一下 要构建的这个StreamNode的具体StreamTask类型？
 			addNode(vertexID, slotSharingGroup, coLocationGroup, SourceStreamTask.class, operatorObject, operatorName);
 		} else {
 
@@ -273,6 +276,16 @@ public class StreamGraph extends StreamingPlan {
 		}
 	}
 
+	/**
+	 * 最底层的构建 StreamNode 的方法；
+	 * @param vertexID   顶点id = 取StreamTransformation的id ( 每一个StreamTransformation有一个id，且不会重复 )
+	 * @param slotSharingGroup
+	 * @param coLocationGroup
+	 * @param vertexClass    tm最终要跑的任务类型，SourceStreamTask / OneInputStreamTask / TwoInputStreamTask ...
+	 * @param operatorObject  StreamOperator 封装着用户代码
+	 * @param operatorName
+	 * @return
+	 */
 	protected StreamNode addNode(Integer vertexID,
 		String slotSharingGroup,
 		@Nullable String coLocationGroup,
@@ -284,15 +297,15 @@ public class StreamGraph extends StreamingPlan {
 			throw new RuntimeException("Duplicate vertexID " + vertexID);
 		}
 
-		//Stream
+		//构建StreamNode
 		StreamNode vertex = new StreamNode(environment,
-			vertexID,
+			vertexID,    //id
 			slotSharingGroup,
 			coLocationGroup,
-			operatorObject,
+			operatorObject,  //所以每个StreamNode中都封装着 StreamOperator
 			operatorName,
 			new ArrayList<OutputSelector<?>>(),
-			vertexClass);
+			vertexClass);  //和 Task 类型；
 
 		streamNodes.put(vertexID, vertex);
 
@@ -363,9 +376,9 @@ public class StreamGraph extends StreamingPlan {
 	 * <p>When adding an edge from the virtual node to a downstream node the connection will be made
 	 * to the original node, but with the partitioning given here.
 	 *
-	 * @param originalId ID of the node that should be connected to.
-	 * @param virtualId ID of the virtual node.
-	 * @param partitioner The partitioner
+	 * @param originalId ID of the node that should be connected to.  上游算子id
+	 * @param virtualId ID of the virtual node.					     新生成的partitioner 虚拟算子id，
+	 * @param partitioner The partitioner          具体的Partitioner
 	 */
 	public void addVirtualPartitionNode(Integer originalId, Integer virtualId, StreamPartitioner<?> partitioner) {
 
@@ -396,6 +409,11 @@ public class StreamGraph extends StreamingPlan {
 		}
 	}
 
+	/**
+	 * @param upStreamVertexID    边连接的上级算子
+	 * @param downStreamVertexID   边连接的下级算子
+	 * @param typeNumber  ？
+	 */
 	public void addEdge(Integer upStreamVertexID, Integer downStreamVertexID, int typeNumber) {
 		addEdgeInternal(upStreamVertexID,
 				downStreamVertexID,
@@ -406,7 +424,7 @@ public class StreamGraph extends StreamingPlan {
 
 	}
 
-	//addEdge的实现，会合并一些逻辑节点
+	//addEdge的实现，会合并一些逻辑节点，比如 select union partition 等
 	private void addEdgeInternal(Integer upStreamVertexID,
 			Integer downStreamVertexID,
 			int typeNumber,
@@ -433,10 +451,11 @@ public class StreamGraph extends StreamingPlan {
 			}
 			addEdgeInternal(upStreamVertexID, downStreamVertexID, typeNumber, partitioner, outputNames, outputTag);
 
-		//如果是partition节点
+		//先判断是不是虚拟节点上的边，如果是，则找到虚拟节点上游对应的物理节点
+		//在两个物理节点之间添加边，并把对应的 StreamPartitioner,或者 OutputTag 等补充信息添加到StreamEdge中
 		} else if (virtualPartitionNodes.containsKey(upStreamVertexID)) {
 			int virtualId = upStreamVertexID;
-			upStreamVertexID = virtualPartitionNodes.get(virtualId).f0;
+			upStreamVertexID = virtualPartitionNodes.get(virtualId).f0; //upStreamVertexID 真正的上游算子的 id，
 			if (partitioner == null) {
 				partitioner = virtualPartitionNodes.get(virtualId).f1;
 			}
@@ -449,6 +468,7 @@ public class StreamGraph extends StreamingPlan {
 
 			// If no partitioner was specified and the parallelism of upstream and downstream
 			// operator matches use forward partitioning, use rebalance otherwise.
+			//如果没有指定partitioner，并且上游算子和下游算子的并行度一致，则指定使用forward分区策略，否则，使用 RebalancePartitioner
 			if (partitioner == null && upstreamNode.getParallelism() == downstreamNode.getParallelism()) {
 				partitioner = new ForwardPartitioner<Object>();
 			} else if (partitioner == null) {
@@ -464,10 +484,11 @@ public class StreamGraph extends StreamingPlan {
 				}
 			}
 
+			//构建一条边，StreamGraph是没有存边的，只存了StreamNode，边是存在 StreamNode 中的；每一个 StreamNode 都保存着这个节点所有的出的边和入的边
 			StreamEdge edge = new StreamEdge(upstreamNode, downstreamNode, typeNumber, outputNames, partitioner, outputTag);
 
-			getStreamNode(edge.getSourceId()).addOutEdge(edge);
-			getStreamNode(edge.getTargetId()).addInEdge(edge);
+			getStreamNode(edge.getSourceId()).addOutEdge(edge);  //上层节点加入出边
+			getStreamNode(edge.getTargetId()).addInEdge(edge);   //下层节点加入入边
 		}
 	}
 

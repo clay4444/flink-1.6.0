@@ -85,7 +85,7 @@ public abstract class RpcEndpoint implements RpcGateway {
 		this.rpcService = checkNotNull(rpcService, "rpcService");
 		this.endpointId = checkNotNull(endpointId, "endpointId");
 
-		this.rpcServer = rpcService.startServer(this);
+		this.rpcServer = rpcService.startServer(this);  //startServer 会为每一个 RpcEndpoint 创建一个 Actor
 
 		this.mainThreadExecutor = new MainThreadExecutor(rpcServer);
 	}
@@ -172,8 +172,8 @@ public abstract class RpcEndpoint implements RpcGateway {
 	 * @return Self gateway of the specified type which can be used to issue asynchronous rpcs
 	 */
 	public <C extends RpcGateway> C getSelfGateway(Class<C> selfGatewayType) {
-		if (selfGatewayType.isInstance(rpcServer)) {
-			@SuppressWarnings("unchecked")
+		if (selfGatewayType.isInstance(rpcServer)) {   //检查一下这个 rpcServer 代理对象 是否实现了指定的 RpcGateway，这个代理对象和创建EndPoint时指定的EndPoint实现的接口一致；
+			@SuppressWarnings("unchecked")		      //所以如果代理对象没实现指定的 RpcGateway，那么这个EndPoint肯定也没有实现该 RpcGateway；
 			C selfGateway = ((C) rpcServer);
 
 			return selfGateway;

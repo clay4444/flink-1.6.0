@@ -28,12 +28,25 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.apache.flink.util.Preconditions.checkArgument;
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
+/**
+ * 在 JobGraph 中用 IntermediateDataSet 表示 JobVertex 的对外输出，一个 JobGraph 可能有 n(n >=0) 个输出。在 ExecutionGraph 中，与此对应的就是 IntermediateResult。
+ */
 public class IntermediateResult {
 
-	private final IntermediateDataSetID id;
+	private final IntermediateDataSetID id;     //对应的IntermediateDataSet的ID
 
-	private final ExecutionJobVertex producer;
+	private final ExecutionJobVertex producer; 	//生产者是上游的 ExecutionJobVertex
 
+
+	/**
+	 * 由于 ExecutionJobVertex 有 numParallelProducers 个并行的子任务，自然对应的每一个 IntermediateResult 就有 numParallelProducers 个生产者，
+	 * 每个生产者的在相应的 IntermediateResult 上的输出对应一个 IntermediateResultPartition。IntermediateResultPartition 表示的是 ExecutionVertex 的一个输出分区，即：
+	 *
+	 * ExecutionJobVertex -->  IntermediateResult
+	 * ExecutionVertex -->  IntermediateResultPartition
+	 *
+	 * IntermediateResultPartition 的生产者是ExecutionVertex，消费者是一个或若干个 ExecutionEdge。
+	 */
 	private final IntermediateResultPartition[] partitions;
 
 	/**
@@ -44,7 +57,7 @@ public class IntermediateResult {
 	 */
 	private final HashMap<IntermediateResultPartitionID, Integer> partitionLookupHelper = new HashMap<>();
 
-	private final int numParallelProducers;
+	private final int numParallelProducers;   //对应ExecutionJobVertex的并行度
 
 	private final AtomicInteger numberOfRunningProducers;
 
@@ -56,10 +69,17 @@ public class IntermediateResult {
 
 	private final ResultPartitionType resultType;
 
+	/**
+	 * 根据 JobVertex 创建ExecutionJobVertex的时候会创建下游对应的 IntermediateResult，有几个IntermediateDataSetID就有几个 IntermediateResult
+	 * @param id
+	 * @param producer
+	 * @param numParallelProducers
+	 * @param resultType
+	 */
 	public IntermediateResult(
 			IntermediateDataSetID id,
 			ExecutionJobVertex producer,
-			int numParallelProducers,
+			int numParallelProducers, 	//JobVertex的并行度，这个并行度决定着 IntermediateResultPartition 的个数，上游  ExecutionVertex 生产者的个数
 			ResultPartitionType resultType) {
 
 		this.id = checkNotNull(id);
@@ -68,7 +88,7 @@ public class IntermediateResult {
 		checkArgument(numParallelProducers >= 1);
 		this.numParallelProducers = numParallelProducers;
 
-		this.partitions = new IntermediateResultPartition[numParallelProducers];
+		this.partitions = new IntermediateResultPartition[numParallelProducers]; //partition 数组也创建了，但也只创建了数组，具体的partition是在创建ExecutionVertex的时候创建的；
 
 		this.numberOfRunningProducers = new AtomicInteger(numParallelProducers);
 

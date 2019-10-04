@@ -54,16 +54,16 @@ public class JobVertex implements java.io.Serializable {
 	private final ArrayList<JobVertexID> idAlternatives = new ArrayList<>();
 
 	/** The IDs of all operators contained in this vertex. */
-	private final ArrayList<OperatorID> operatorIDs = new ArrayList<>();
+	private final ArrayList<OperatorID> operatorIDs = new ArrayList<>();   //这个JobVertex中的所有的StreamNode operator的OperatorID(根据哈希值生成的)，有几个StreamNode chain在这个JobVertex了，就有几个 OperatorID；
 
 	/** The alternative IDs of all operators contained in this vertex. */
 	private final ArrayList<OperatorID> operatorIdsAlternatives = new ArrayList<>();
 
 	/** List of produced data sets, one per writer */
-	private final ArrayList<IntermediateDataSet> results = new ArrayList<IntermediateDataSet>();
+	private final ArrayList<IntermediateDataSet> results = new ArrayList<IntermediateDataSet>();   //输出是 IntermediateDataSet
 
 	/** List of edges with incoming data. One per Reader. */
-	private final ArrayList<JobEdge> inputs = new ArrayList<JobEdge>();
+	private final ArrayList<JobEdge> inputs = new ArrayList<JobEdge>();    //一个 JobVertex的输入是JobEdge，
 
 	/** Number of subtasks to split this task into at runtime.*/
 	private int parallelism = ExecutionConfig.PARALLELISM_DEFAULT;
@@ -78,10 +78,10 @@ public class JobVertex implements java.io.Serializable {
 	private ResourceSpec preferredResources = ResourceSpec.DEFAULT;
 
 	/** Custom configuration passed to the assigned task at runtime. */
-	private Configuration configuration;
+	private Configuration configuration;				//StreamConfig的所有信息都会填入这里，因为创建StreamConfig的时候指定的Configuration就是 JobVertex 的 Configuration；
 
 	/** The class of the invokable. */
-	private String invokableClassName;
+	private String invokableClassName;   		 //create chain 中 streamNode.getJobVertexClass()，从StreamNode中直接取出来了, SourceStreamTask / OneInputStreamTask / TwoInputStreamTask ...
 
 	/** Indicates of this job vertex is stoppable or not. */
 	private boolean isStoppable = false;
@@ -461,6 +461,11 @@ public class JobVertex implements java.io.Serializable {
 		return edge;
 	}
 
+	/**
+	 * 创建 IntermediateDataSet 作为input 的 JobEdge
+	 * 可以理解为JobGraph的整个dag 关系 就是在这里构建的，StreamingJobGraphGenerator的createChain方法，仅仅是构建所有的JobVertex的，
+	 * 真正构建 IntermediateDataSet 和 JobEdge，和维护他们之间的关系，都是在这里做的；
+	 */
 	public JobEdge connectNewDataSetAsInput(
 			JobVertex input,
 			DistributionPattern distPattern,
@@ -469,7 +474,7 @@ public class JobVertex implements java.io.Serializable {
 		IntermediateDataSet dataSet = input.createAndAddResultDataSet(partitionType);
 
 		JobEdge edge = new JobEdge(dataSet, this, distPattern);
-		this.inputs.add(edge);
+		this.inputs.add(edge); //在这设置的 JobVertex 的 input
 		dataSet.addConsumer(edge);
 		return edge;
 	}

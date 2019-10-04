@@ -23,22 +23,27 @@ package org.apache.flink.runtime.jobgraph;
  * The edges always go from an intermediate result partition to a job vertex.
  * An edge is parametrized with its {@link DistributionPattern}.
  */
+
+/**
+ * 在 StramGraph 中，StreamNode 之间是通过 StreamEdge 建立连接的。在 JobGraph 中，对应的是 JobEdge 。
+ * JobEdge 上游连接的是 IntermediateDataSet 中间结果变量，下游连接的是 JobVertex
+ */
 public class JobEdge implements java.io.Serializable {
 
 	private static final long serialVersionUID = 1L;
 	
 	
 	/** The vertex connected to this edge. */
-	private final JobVertex target;
+	private final JobVertex target;   						 //连接的下游 JobVertex 节点
 
 	/** The distribution pattern that should be used for this job edge. */
-	private final DistributionPattern distributionPattern;
+	private final DistributionPattern distributionPattern;    // DistributionPattern 决定了在上游节点（生产者）的子任务和下游节点（消费者）之间的连接模式
 	
 	/** The data set at the source of the edge, may be null if the edge is not yet connected*/
-	private IntermediateDataSet source;
+	private IntermediateDataSet source;                     //连接的上游 IntermediateDataSet 中间结果
 	
 	/** The id of the source intermediate data set */
-	private IntermediateDataSetID sourceId;
+	private IntermediateDataSetID sourceId;  // JobEdge 连接的source 是 IntermediateDataSet
 	
 	/** Optional name for the data shipping strategy (forward, partition hash, rebalance, ...),
 	 * to be displayed in the JSON plan */

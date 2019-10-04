@@ -18,10 +18,16 @@
 
 package org.apache.flink.runtime.io.network.partition;
 
+/**
+ * 最好结合 Flink 的内存管理机制来看；
+ */
 public enum ResultPartitionType {
 
+
+	//blocking 落盘？
 	BLOCKING(false, false, false),
 
+	//pipelined  直接传给下游 ?
 	PIPELINED(true, true, false),
 
 	/**
@@ -34,6 +40,11 @@ public enum ResultPartitionType {
 	 *
 	 * For batch jobs, it will be best to keep this unlimited ({@link #PIPELINED}) since there are
 	 * no checkpoint barriers.
+	 *
+	 * 使用一个本地有界的缓冲池作为 Pipelined partitions
+	 * 对于流作业来说，一个固定大小限制的缓冲池，有助于避免大量数据被缓存，checkpoint barrier 被延迟的情况；
+	 *
+	 * 目前在 Stream 模式下使用的类型是 PIPELINED_BOUNDED(true, true, true)，三个属性都是 true。
 	 */
 	PIPELINED_BOUNDED(true, true, true);
 

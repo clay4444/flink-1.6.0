@@ -25,6 +25,9 @@ import java.io.Serializable;
 import java.util.List;
 
 /**
+ * 流作业的拓扑图中的边，
+ * 边不一定要被转化为在两个job vertices之间的连接，因为可能有一些chain等优化策略；
+ *
  * An edge in the streaming topology. One edge like this does not necessarily
  * gets converted to a connection between two job vertices (due to
  * chaining/optimization).
@@ -36,6 +39,7 @@ public class StreamEdge implements Serializable {
 
 	private final String edgeId;
 
+	//同时保存了，所连接的两个 StreamNode
 	private final StreamNode sourceVertex;
 	private final StreamNode targetVertex;
 
@@ -57,6 +61,7 @@ public class StreamEdge implements Serializable {
 
 	/**
 	 * The {@link StreamPartitioner} on this {@link StreamEdge}.
+	 * Partition 策略； 最长
 	 */
 	private StreamPartitioner<?> outputPartitioner;
 

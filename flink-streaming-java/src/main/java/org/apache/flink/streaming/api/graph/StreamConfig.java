@@ -45,6 +45,9 @@ import java.util.Map;
 /**
  * Internal configuration for a {@link StreamOperator}. This is created and populated by the
  * {@link StreamingJobGraphGenerator}.
+ *
+ * 对于每一个 StreamOperator, 也就是 StreamGraph 中的每一个 StreamNode, 在生成 JobGraph 的过程中 StreamingJobGraphGenerator 都会创建一个对应的 StreamConfig。
+ * StreamConfig 中保存了这个算子（operator） 在运行是需要的所有配置信息，这些信息都是通过 key/value 的形式存储在 Configuration 中的。例如：
  */
 @Internal
 public class StreamConfig implements Serializable {
@@ -206,12 +209,13 @@ public class StreamConfig implements Serializable {
 		return getBufferTimeout() == 0;
 	}
 
+	//保存StreamOperator信息
 	public void setStreamOperator(StreamOperator<?> operator) {
 		if (operator != null) {
 			config.setClass(USER_FUNCTION, operator.getClass());
 
 			try {
-				InstantiationUtil.writeObjectToConfig(operator, this.config, SERIALIZEDUDF);
+				InstantiationUtil.writeObjectToConfig(operator, this.config, SERIALIZEDUDF);  //序列化成byte[] 数组，保存进了config
 			} catch (IOException e) {
 				throw new StreamTaskException("Cannot serialize operator object "
 						+ operator.getClass() + ".", e);
@@ -325,6 +329,9 @@ public class StreamConfig implements Serializable {
 		}
 	}
 
+	/**
+	 * operator chain 的头部 operator 的输出边，包括 [chain内部的边]，
+	 */
 	public void setOutEdges(List<StreamEdge> outEdges) {
 		try {
 			InstantiationUtil.writeObjectToConfig(outEdges, this.config, OUT_STREAM_EDGES);
@@ -342,6 +349,9 @@ public class StreamConfig implements Serializable {
 		}
 	}
 
+	/**
+	 * 为这个Node(headOperator) 对应的 StreamConfig 设置它对应的物理输入边；
+	 */
 	public void setInPhysicalEdges(List<StreamEdge> inEdges) {
 		try {
 			InstantiationUtil.writeObjectToConfig(inEdges, this.config, IN_STREAM_EDGES);
@@ -382,6 +392,9 @@ public class StreamConfig implements Serializable {
 		}
 	}
 
+	/**
+	 * 实际的物理输出边
+	 */
 	public void setOutEdgesInOrder(List<StreamEdge> outEdgeList) {
 		try {
 			InstantiationUtil.writeObjectToConfig(outEdgeList, this.config, EDGES_IN_ORDER);

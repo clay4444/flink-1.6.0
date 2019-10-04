@@ -72,7 +72,7 @@ class AkkaInvocationHandler implements InvocationHandler, AkkaBasedEndpoint, Rpc
 	 */
 	private final String hostname;
 
-	private final ActorRef rpcEndpoint;
+	private final ActorRef rpcEndpoint;  		//具体自定义的协议需要向这个Actor发送消息去处理； 一般都是AkkaRpcActor；
 
 	// whether the actor ref is local and thus no message serialization is needed
 	protected final boolean isLocal;
@@ -105,14 +105,14 @@ class AkkaInvocationHandler implements InvocationHandler, AkkaBasedEndpoint, Rpc
 
 	@Override
 	public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-		Class<?> declaringClass = method.getDeclaringClass();
+		Class<?> declaringClass = method.getDeclaringClass();   //首先明确是调用哪种类的方法，
 
 		Object result;
 
 		if (declaringClass.equals(AkkaBasedEndpoint.class) ||
 			declaringClass.equals(Object.class) ||
 			declaringClass.equals(RpcGateway.class) ||
-			declaringClass.equals(StartStoppable.class) ||
+			declaringClass.equals(StartStoppable.class) ||  	//对于它来说，主要是动态调它的 start 方法
 			declaringClass.equals(MainThreadExecutable.class) ||
 			declaringClass.equals(RpcServer.class)) {
 			result = method.invoke(this, args);
@@ -122,7 +122,7 @@ class AkkaInvocationHandler implements InvocationHandler, AkkaBasedEndpoint, Rpc
 				"fencing token. Please use RpcService#connect(RpcService, F, Time) with F being the fencing token to " +
 				"retrieve a properly FencedRpcGateway.");
 		} else {
-			result = invokeRpc(method, args);
+			result = invokeRpc(method, args);  //具体调用自定义的协议实现的方法需要使用这个方法去向 rpcEndpoint 这个Actor 发送消息，然后获取结果
 		}
 
 		return result;
@@ -167,11 +167,13 @@ class AkkaInvocationHandler implements InvocationHandler, AkkaBasedEndpoint, Rpc
 
 	@Override
 	public void start() {
+		//向 Akka actor 发送 START 消息
 		rpcEndpoint.tell(Processing.START, ActorRef.noSender());
 	}
 
 	@Override
 	public void stop() {
+		//向 Akka actor 发送 STOP 消息
 		rpcEndpoint.tell(Processing.STOP, ActorRef.noSender());
 	}
 
@@ -186,28 +188,31 @@ class AkkaInvocationHandler implements InvocationHandler, AkkaBasedEndpoint, Rpc
 	 * @param args of the method call
 	 * @return result of the RPC
 	 * @throws Exception if the RPC invocation fails
+	 *
+	 * 通过给Actor 发送 RPC invocation details，来调用 rpc 方法，也就是具体自定义协议的方法实现；
 	 */
 	private Object invokeRpc(Method method, Object[] args) throws Exception {
-		String methodName = method.getName();
-		Class<?>[] parameterTypes = method.getParameterTypes();
-		Annotation[][] parameterAnnotations = method.getParameterAnnotations();
-		Time futureTimeout = extractRpcTimeout(parameterAnnotations, args, timeout);
+		String methodName = method.getName();				//方法名
+		Class<?>[] parameterTypes = method.getParameterTypes();   //参数类型
+		Annotation[][] parameterAnnotations = method.getParameterAnnotations();   //方法注解
+		Time futureTimeout = extractRpcTimeout(parameterAnnotations, args, timeout);  //超时时间
 
-		final RpcInvocation rpcInvocation = createRpcInvocationMessage(methodName, parameterTypes, args);
+		//有两种RpcInvocation：LocalRpcInvocation 和 RemoteRpcInvocation 不同点就是 RemoteRpcInvocation 把三个参数都封装到了一个内部类中，然后把这个内部类序列化了，服务端获取的时候再反序列化；
+		final RpcInvocation rpcInvocation = createRpcInvocationMessage(methodName, parameterTypes, args);  //创建一个 RpcInvocation，相当于一条要发给actor的消息，消息中封装着方法名，参数类型，真正的参数，
 
-		Class<?> returnType = method.getReturnType();
+		Class<?> returnType = method.getReturnType(); // 返回值类型
 
 		final Object result;
 
-		if (Objects.equals(returnType, Void.TYPE)) {
+		if (Objects.equals(returnType, Void.TYPE)) { //如果调用方法的返回值类型是空，直接发一条tell消息，直接结束
 			tell(rpcInvocation);
 
 			result = null;
-		} else if (Objects.equals(returnType, CompletableFuture.class)) {
+		} else if (Objects.equals(returnType, CompletableFuture.class)) {  //如果返回值类型是 CompletableFuture，则需要使用 ask，返回Future
 			// execute an asynchronous call
 			result = ask(rpcInvocation, futureTimeout);
 		} else {
-			// execute a synchronous call
+			// execute a synchronous call，		   //否则，直接同步调用，阻塞等待结果；
 			CompletableFuture<?> futureResult = ask(rpcInvocation, futureTimeout);
 
 			result = futureResult.get(futureTimeout.getSize(), futureTimeout.getUnit());

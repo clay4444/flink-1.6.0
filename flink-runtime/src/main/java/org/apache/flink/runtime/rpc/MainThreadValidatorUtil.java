@@ -35,6 +35,7 @@ public final class MainThreadValidatorUtil {
 		this.endpoint = checkNotNull(endpoint);
 	}
 
+	//确定一个线程，以后的方法调用，都用第一次设置好的线程；
 	public void enterMainThread() {
 		assert(endpoint.currentMainThread.compareAndSet(null, Thread.currentThread())) : 
 				"The RpcEndpoint has concurrent access from " + endpoint.currentMainThread.get();

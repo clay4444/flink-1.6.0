@@ -23,6 +23,9 @@ import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 
 /**
  * Partitioner that forwards elements only to the locally running downstream operation.
+ * 直接把元素转发给下游
+ * 什么情况下会使用 ForwardPartitioner ？
+ * 在用户没有执行partitoner，且上下游算子的并行度一致的时候，数据的分区策略会被自动指定为 ForwardPartitioner
  *
  * @param <T> Type of the elements in the Stream
  */

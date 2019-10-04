@@ -57,7 +57,7 @@ public class RpcUtils {
 			clazz = clazz.getSuperclass();
 		}
 
-		return interfaces;
+		return interfaces; //HelloGateway、RpcGateway 两个，
 	}
 
 	/**

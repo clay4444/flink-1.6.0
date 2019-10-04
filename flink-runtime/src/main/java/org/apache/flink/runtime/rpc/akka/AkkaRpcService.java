@@ -18,6 +18,7 @@
 
 package org.apache.flink.runtime.rpc.akka;
 
+import akka.actor.*;
 import org.apache.flink.api.common.time.Time;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.runtime.akka.AkkaUtils;
@@ -36,15 +37,6 @@ import org.apache.flink.runtime.rpc.exceptions.RpcConnectionException;
 import org.apache.flink.runtime.rpc.messages.HandshakeSuccessMessage;
 import org.apache.flink.runtime.rpc.messages.RemoteHandshakeMessage;
 
-import akka.actor.ActorIdentity;
-import akka.actor.ActorRef;
-import akka.actor.ActorSelection;
-import akka.actor.ActorSystem;
-import akka.actor.Address;
-import akka.actor.Identify;
-import akka.actor.PoisonPill;
-import akka.actor.Props;
-import akka.actor.Terminated;
 import akka.dispatch.Futures;
 import akka.pattern.Patterns;
 import org.slf4j.Logger;
@@ -95,7 +87,7 @@ public class AkkaRpcService implements RpcService {
 	private final Time timeout;
 
 	@GuardedBy("lock")
-	private final Map<ActorRef, RpcEndpoint> actors = new HashMap<>(4);
+	private final Map<ActorRef, RpcEndpoint> actors = new HashMap<>(4);   //维护 Actor 和 rpcEndpoint 的关系
 
 	private final long maximumFramesize;
 
@@ -200,6 +192,14 @@ public class AkkaRpcService implements RpcService {
 			});
 	}
 
+	/**
+	 * 创建具体的 RpcEndpoint 后，会使用该方法来返回一个RpcServer，这个RpcServer就是传入 rpcEndpoint 的一个代理对象；
+	 * @param rpcEndpoint Rpc protocol to dispatch the rpcs to
+	 * @param <C>
+	 * @return
+	 *
+	 * 每一个 rpcEndpoint 对应一个 Actor ！！！
+	 */
 	@Override
 	public <C extends RpcEndpoint & RpcGateway> RpcServer startServer(C rpcEndpoint) {
 		checkNotNull(rpcEndpoint, "rpc endpoint");
@@ -207,23 +207,24 @@ public class AkkaRpcService implements RpcService {
 		CompletableFuture<Void> terminationFuture = new CompletableFuture<>();
 		final Props akkaRpcActorProps;
 
-		if (rpcEndpoint instanceof FencedRpcEndpoint) {
+		if (rpcEndpoint instanceof FencedRpcEndpoint) { // FencedRpcEndpoint 是加密通信用的；
 			akkaRpcActorProps = Props.create(FencedAkkaRpcActor.class, rpcEndpoint, terminationFuture, getVersion());
 		} else {
-			akkaRpcActorProps = Props.create(AkkaRpcActor.class, rpcEndpoint, terminationFuture, getVersion());
+			akkaRpcActorProps = Props.create(AkkaRpcActor.class, rpcEndpoint, terminationFuture, getVersion());  //创建具体的Actor
 		}
 
 		ActorRef actorRef;
 
+		// 创建 Akka actor
 		synchronized (lock) {
 			checkState(!stopped, "RpcService is stopped");
-			actorRef = actorSystem.actorOf(akkaRpcActorProps, rpcEndpoint.getEndpointId());
-			actors.put(actorRef, rpcEndpoint);
+			actorRef = actorSystem.actorOf(akkaRpcActorProps, rpcEndpoint.getEndpointId()); //第二个参数是actor Name，
+			actors.put(actorRef, rpcEndpoint);   //维护 Actor 和 rpcEndpoint 的关系
 		}
 
 		LOG.info("Starting RPC endpoint for {} at {} .", rpcEndpoint.getClass().getName(), actorRef.path());
 
-		final String akkaAddress = AkkaUtils.getAkkaURL(actorSystem, actorRef);
+		final String akkaAddress = AkkaUtils.getAkkaURL(actorSystem, actorRef);  // akka.tcp://flink@192.168.199.144:60230/user/5e9b2ecf-fbde-487b-baf7-3010c12e1db1
 		final String hostname;
 		Option<String> host = actorRef.path().address().host();
 		if (host.isEmpty()) {
@@ -232,13 +233,15 @@ public class AkkaRpcService implements RpcService {
 			hostname = host.get();
 		}
 
-		Set<Class<?>> implementedRpcGateways = new HashSet<>(RpcUtils.extractImplementedRpcGateways(rpcEndpoint.getClass()));
+		// 抽取出这个 EndPoint 代理的所有接口 ( 接口要继承RpcGateway )
+		Set<Class<?>> implementedRpcGateways = new HashSet<>(RpcUtils.extractImplementedRpcGateways(rpcEndpoint.getClass()));  //HelloGateway、RpcGateway 两个，
 
-		implementedRpcGateways.add(RpcServer.class);
+		implementedRpcGateways.add(RpcServer.class);   //start方法的执行也是动态调用到代理对象的start方法的；
 		implementedRpcGateways.add(AkkaBasedEndpoint.class);
 
 		final InvocationHandler akkaInvocationHandler;
 
+		//创建 InvocationHandler
 		if (rpcEndpoint instanceof FencedRpcEndpoint) {
 			// a FencedRpcEndpoint needs a FencedAkkaInvocationHandler
 			akkaInvocationHandler = new FencedAkkaInvocationHandler<>(
@@ -266,6 +269,7 @@ public class AkkaRpcService implements RpcService {
 		// code is loaded dynamically (for example from an OSGI bundle) through a custom ClassLoader
 		ClassLoader classLoader = getClass().getClassLoader();
 
+		//通过动态代理创建代理对象
 		@SuppressWarnings("unchecked")
 		RpcServer server = (RpcServer) Proxy.newProxyInstance(
 			classLoader,

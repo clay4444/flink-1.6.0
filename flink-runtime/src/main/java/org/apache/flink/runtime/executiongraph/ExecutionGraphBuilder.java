@@ -70,6 +70,7 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /**
  * Utility class to encapsulate the logic of building an {@link ExecutionGraph} from a {@link JobGraph}.
+ * 创建 ExecutionGraph 的入口
  */
 public class ExecutionGraphBuilder {
 	public static final String PARALLELISM_AUTO_MAX_ERROR_MESSAGE =
@@ -194,11 +195,15 @@ public class ExecutionGraphBuilder {
 		// initialize the vertices that have a master initialization hook
 		// file output formats create directories here, input formats create splits
 
+		/**
+		 * JobVertex 在 Master 上进行初始化，主要关注OutputFormatVertex 和 InputFormatVertex，其他类型的 vertex 在这里没有什么特殊操作。
+		 * File output format 在这一步准备好输出目录, Input splits 在这一步创建对应的 splits。
+		 */
 		final long initMasterStart = System.nanoTime();
 		log.info("Running initialization on master for job {} ({}).", jobName, jobId);
 
 		for (JobVertex vertex : jobGraph.getVertices()) {
-			String executableClass = vertex.getInvokableClassName();
+			String executableClass = vertex.getInvokableClassName();  // SourceStreamTask / OneInputStreamTask / TwoInputStreamTask 等
 			if (executableClass == null || executableClass.isEmpty()) {
 				throw new JobSubmissionException(jobId,
 						"The vertex " + vertex.getID() + " (" + vertex.getName() + ") has no invokable class.");
@@ -228,10 +233,13 @@ public class ExecutionGraphBuilder {
 				(System.nanoTime() - initMasterStart) / 1_000_000);
 
 		// topologically sort the job vertices and attach the graph to the existing one
+		//对所有的 Jobvertext 进行拓扑排序，并生成 ExecutionGraph 内部的节点和连接
 		List<JobVertex> sortedTopology = jobGraph.getVerticesSortedTopologicallyFromSources();
 		if (log.isDebugEnabled()) {
 			log.debug("Adding {} vertices from job graph {} ({}).", sortedTopology.size(), jobName, jobId);
 		}
+
+		//真正构建 executionGraph 的方法；
 		executionGraph.attachJobGraph(sortedTopology);
 
 		if (log.isDebugEnabled()) {

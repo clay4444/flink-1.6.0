@@ -190,16 +190,16 @@ public class ExecutionGraph implements AccessExecutionGraph {
 	private boolean isStoppable = true;
 
 	/** All job vertices that are part of this graph. */
-	private final ConcurrentHashMap<JobVertexID, ExecutionJobVertex> tasks;
+	private final ConcurrentHashMap<JobVertexID, ExecutionJobVertex> tasks;  		 //所有的 ExecutionJobVertex (从JobVertex中生成)  注意key是 JobVertexID
 
 	/** All vertices, in the order in which they were created. **/
-	private final List<ExecutionJobVertex> verticesInCreationOrder;
+	private final List<ExecutionJobVertex> verticesInCreationOrder;					//保存所有按照 拓扑排序 顺序创建的 ExecutionJobVertex，
 
 	/** All intermediate results that are part of this graph. */
-	private final ConcurrentHashMap<IntermediateDataSetID, IntermediateResult> intermediateResults;
+	private final ConcurrentHashMap<IntermediateDataSetID, IntermediateResult> intermediateResults;    //所有的 intermediateResults 注意一下key是 intermediateDataSetID；
 
 	/** The currently executed tasks, for callbacks. */
-	private final ConcurrentHashMap<ExecutionAttemptID, Execution> currentExecutions;
+	private final ConcurrentHashMap<ExecutionAttemptID, Execution> currentExecutions;  //所有的Execution，一个Execution是ExecutionVertex的一次执行；
 
 	/** Listeners that receive messages when the entire job switches it status
 	 * (such as from RUNNING to FINISHED). */
@@ -239,7 +239,7 @@ public class ExecutionGraph implements AccessExecutionGraph {
 	private final BlobWriter blobWriter;
 
 	/** The total number of vertices currently in the execution graph. */
-	private int numVerticesTotal;
+	private int numVerticesTotal;   										//需要的所有核数，= 所有算子的并行度相加
 
 	// ------ Configuration of the Execution -------
 
@@ -816,7 +816,8 @@ public class ExecutionGraph implements AccessExecutionGraph {
 	 * 因为 ExecutionGraph 事实上只是改动了 JobGraph 的每个节点，而没有对整个拓扑结构进行变动
 	 * 所以代码里只是挨个遍历jobVertex并进行处理：
 	 *
-	 * @param topologiallySorted
+	 * 按照拓扑排序的结果依次为每个 JobVertex 创建对应的 ExecutionJobVertex。
+	 * @param topologiallySorted   拓扑排序好的结果，直接顺序遍历就是正确的顺序
 	 * @throws JobException
 	 */
 	public void attachJobGraph(List<JobVertex> topologiallySorted) throws JobException {
@@ -825,7 +826,7 @@ public class ExecutionGraph implements AccessExecutionGraph {
 				"vertices and {} intermediate results.",
 				topologiallySorted.size(), tasks.size(), intermediateResults.size());
 
-		final ArrayList<ExecutionJobVertex> newExecJobVertices = new ArrayList<>(topologiallySorted.size());
+		final ArrayList<ExecutionJobVertex> newExecJobVertices = new ArrayList<>(topologiallySorted.size());  //为什么又创建一个保存所有ExecutionJobVertex的容器  等价于 verticesInCreationOrder 啊！
 		final long createTimestamp = System.currentTimeMillis();
 
 		for (JobVertex jobVertex : topologiallySorted) {
@@ -834,10 +835,10 @@ public class ExecutionGraph implements AccessExecutionGraph {
 				this.isStoppable = false;
 			}
 
-			//在这里生成ExecutionGraph的每个节点
+			//在这里生成ExecutionGraph的每个 ExecutionJobVertex 节点
 			//首先是进行了一堆赋值，将任务信息交给要生成的图节点，以及设定并行度等等
 			//然后是创建本节点的IntermediateResult，根据本节点的下游节点的个数确定创建几份
-			//最后是根据设定好的并行度创建用于执行task的ExecutionVertex
+			//最后是根据设定好的并行度创建用于执行task的ExecutionVertex，还有IntermediateResultPartition
 			//如果job有设定inputsplit的话，这里还要指定inputsplits
 			ExecutionJobVertex ejv = new ExecutionJobVertex(
 				this,
@@ -847,27 +848,28 @@ public class ExecutionGraph implements AccessExecutionGraph {
 				globalModVersion,
 				createTimestamp);
 
-			//这里要处理所有的JobEdge
-			//对每个edge，获取对应的intermediateResult，并记录到本节点的输入上
-			//最后，把每个ExecutorVertex和对应的IntermediateResult关联起来
+			//建立边 ExecutionEdge 的过程，ExecutionEdge的两边分别连接着intermediateResultPartition和ExecutorVertex，
+			//所以整个过程也就是 建立 ExecutionVertex的inputEdges输入边 和 ExecutionEdge 的连接关系； 还有 IntermediateResultPartition的所有consumers输出边 和 ExecutionEdge 的连接关系；
 			ejv.connectToPredecessors(this.intermediateResults);
 
-			ExecutionJobVertex previousTask = this.tasks.putIfAbsent(jobVertex.getID(), ejv);
+			ExecutionJobVertex previousTask = this.tasks.putIfAbsent(jobVertex.getID(), ejv);  //把生成的ExecutionJobVertex 放入 tasks 中；
 			if (previousTask != null) {
 				throw new JobException(String.format("Encountered two job vertices with ID %s : previous=[%s] / new=[%s]",
 						jobVertex.getID(), ejv, previousTask));
 			}
 
+			//遍历创建 ExecutionJobVertex 时创建的 IntermediateResult 数组； 把所有的IntermediateResult放入 intermediateResults，
+			//这样下一个算子在connectToPredecessors方法中通过sourceid去找上游的连接的intermediateResult就可以找到；顺利建立链接
 			for (IntermediateResult res : ejv.getProducedDataSets()) {
-				IntermediateResult previousDataSet = this.intermediateResults.putIfAbsent(res.getId(), res);
+				IntermediateResult previousDataSet = this.intermediateResults.putIfAbsent(res.getId(), res);  //res.getId() 返回resout对应的dataset的id，
 				if (previousDataSet != null) {
 					throw new JobException(String.format("Encountered two intermediate data set with ID %s : previous=[%s] / new=[%s]",
 							res.getId(), res, previousDataSet));
 				}
 			}
 
-			this.verticesInCreationOrder.add(ejv);
-			this.numVerticesTotal += ejv.getParallelism();
+			this.verticesInCreationOrder.add(ejv);  //把刚创建好的ExecutionJobVertex 放入 verticesInCreationOrder
+			this.numVerticesTotal += ejv.getParallelism();  //这还保存了一下所有需要的cpu核？ 所有并行度相加
 			newExecJobVertices.add(ejv);
 		}
 
@@ -1669,6 +1671,9 @@ public class ExecutionGraph implements AccessExecutionGraph {
 		return Collections.unmodifiableMap(currentExecutions);
 	}
 
+	/**
+	 * 注册一个 ExecutionVertex 的一次执行。如果执行id重复，直接抛出异常；
+	 */
 	void registerExecution(Execution exec) {
 		Execution previous = currentExecutions.putIfAbsent(exec.getAttemptId(), exec);
 		if (previous != null) {

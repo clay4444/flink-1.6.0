@@ -21,6 +21,8 @@ package org.apache.flink.runtime.io.network.api.writer;
 import org.apache.flink.core.io.IOReadableWritable;
 
 /**
+ * 决定一个元素应该被写入哪个逻辑上的channel
+ *
  * The {@link ChannelSelector} determines to which logical channels a record
  * should be written to.
  *

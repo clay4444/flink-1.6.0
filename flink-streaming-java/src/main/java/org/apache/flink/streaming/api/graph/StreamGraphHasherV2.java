@@ -74,20 +74,24 @@ public class StreamGraphHasherV2 implements StreamGraphHasher {
 	 *
 	 * @return A map from {@link StreamNode#id} to hash as 16-byte array.
 	 */
+
+	/**
+	 * 为 StreamGraph 中的每个 StreamNode 生成一个hash值，这个哈希值会被用作 JobVertexID，保证如果提交的拓扑没有改变，则每次生成的hash都是一样的
+	 */
 	@Override
 	public Map<Integer, byte[]> traverseStreamGraphAndGenerateHashes(StreamGraph streamGraph) {
 		// The hash function used to generate the hash
 		final HashFunction hashFunction = Hashing.murmur3_128(0);
-		final Map<Integer, byte[]> hashes = new HashMap<>();
+		final Map<Integer, byte[]> hashes = new HashMap<>();   //res   < NodeId, Node的哈希值 >
 
 		Set<Integer> visited = new HashSet<>();
-		Queue<StreamNode> remaining = new ArrayDeque<>();
+		Queue<StreamNode> remaining = new ArrayDeque<>();  //BFS 使用队列
 
 		// We need to make the source order deterministic. The source IDs are
 		// not returned in the same order, which means that submitting the same
 		// program twice might result in different traversal, which breaks the
 		// deterministic hash assignment.
-		List<Integer> sources = new ArrayList<>();
+		List<Integer> sources = new ArrayList<>();    //先找出所有source
 		for (Integer sourceNodeId : streamGraph.getSourceIDs()) {
 			sources.add(sourceNodeId);
 		}
@@ -100,7 +104,7 @@ public class StreamGraphHasherV2 implements StreamGraphHasher {
 
 		// Start with source nodes
 		for (Integer sourceNodeId : sources) {
-			remaining.add(streamGraph.getStreamNode(sourceNodeId));
+			remaining.add(streamGraph.getStreamNode(sourceNodeId));  // source 作为 start
 			visited.add(sourceNodeId);
 		}
 
@@ -109,12 +113,12 @@ public class StreamGraphHasherV2 implements StreamGraphHasher {
 			// Generate the hash code. Because multiple path exist to each
 			// node, we might not have all required inputs available to
 			// generate the hash code.
-			if (generateNodeHash(currentNode, hashFunction, hashes, streamGraph.isChainingEnabled())) {
+			if (generateNodeHash(currentNode, hashFunction, hashes, streamGraph.isChainingEnabled())) {  //生成哈希值；
 				// Add the child nodes
 				for (StreamEdge outEdge : currentNode.getOutEdges()) {
-					StreamNode child = outEdge.getTargetVertex();
+					StreamNode child = outEdge.getTargetVertex();  //找所有后继节点，
 
-					if (!visited.contains(child.getId())) {
+					if (!visited.contains(child.getId())) {  //如果没有遍历过，就遍历处理；
 						remaining.add(child);
 						visited.add(child.getId());
 					}
@@ -129,6 +133,8 @@ public class StreamGraphHasherV2 implements StreamGraphHasher {
 	}
 
 	/**
+	 * 返回是否生成成功
+	 *
 	 * Generates a hash for the node and returns whether the operation was
 	 * successful.
 	 *
@@ -142,7 +148,7 @@ public class StreamGraphHasherV2 implements StreamGraphHasher {
 	 *                               intermediate node of a chain
 	 */
 	private boolean generateNodeHash(
-			StreamNode node,
+			StreamNode node,  //为哪个 StreamNode 生成哈希值
 			HashFunction hashFunction,
 			Map<Integer, byte[]> hashes,
 			boolean isChainingEnabled) {
@@ -156,13 +162,15 @@ public class StreamGraphHasherV2 implements StreamGraphHasher {
 				// If the input node has not been visited yet, the current
 				// node will be visited again at a later point when all input
 				// nodes have been visited and their hashes set.
+
+				//必须从前往后依次处理，前面的处理完了才能处理后面的；
 				if (!hashes.containsKey(inEdge.getSourceId())) {
 					return false;
 				}
 			}
 
 			Hasher hasher = hashFunction.newHasher();
-			byte[] hash = generateDeterministicHash(node, hasher, hashes, isChainingEnabled);
+			byte[] hash = generateDeterministicHash(node, hasher, hashes, isChainingEnabled); //为node生成一个明确的hash值；
 
 			if (hashes.put(node.getId(), hash) != null) {
 				// Sanity check
@@ -205,6 +213,9 @@ public class StreamGraphHasherV2 implements StreamGraphHasher {
 	/**
 	 * Generates a deterministic hash from node-local properties and input and
 	 * output edges.
+	 *
+	 * 根据 node 的属性，input edge，output edge，生成一个确定的hash值；
+	 * 也就是根据拓扑结构，生成一个确定的hash值，这样在恢复作业的时候，如果拓扑结构没变，就可以根据hash id值找到对应的state 恢复
 	 */
 	private byte[] generateDeterministicHash(
 			StreamNode node,
@@ -216,15 +227,17 @@ public class StreamGraphHasherV2 implements StreamGraphHasher {
 		// hashes as the ID. We cannot use the node's ID, because it is
 		// assigned from a static counter. This will result in two identical
 		// programs having different hashes.
+		//使用当前的 size 大小 作为 hasher 的id，而不能使用node id，因为node id是根据一个静态的counter生成的，它会导致相同的拓扑结构程序生成不同的 hash
 		generateNodeLocalHash(node, hasher, hashes.size());
 
 		// Include chained nodes to hash
-		for (StreamEdge outEdge : node.getOutEdges()) {
+		for (StreamEdge outEdge : node.getOutEdges()) {   //找当前节点的出边，看是否能chain在一起
 			if (isChainable(outEdge, isChainingEnabled)) {
 				StreamNode chainedNode = outEdge.getTargetVertex();
 
 				// Use the hash size again, because the nodes are chained to
 				// this node. This does not add a hash for the chained nodes.
+				//hash size不用+1，因为后续的这个node是chain到当前node中的，这两个Node在同一个 JobVertex 中；
 				generateNodeLocalHash(chainedNode, hasher, hashes.size());
 			}
 		}
@@ -280,22 +293,35 @@ public class StreamGraphHasherV2 implements StreamGraphHasher {
 		hasher.putInt(id);
 	}
 
+	/**
+	 * StreamEdge 两端的节点是否能够被 chain 到同一个 JobVertex 中
+	 * @return  true / false
+	 */
 	private boolean isChainable(StreamEdge edge, boolean isChainingEnabled) {
+
+		//获取到上游和下游节点
 		StreamNode upStreamVertex = edge.getSourceVertex();
 		StreamNode downStreamVertex = edge.getTargetVertex();
 
+		//获取到上游和下游节点具体的算子 StreamOperator
 		StreamOperator<?> headOperator = upStreamVertex.getOperator();
 		StreamOperator<?> outOperator = downStreamVertex.getOperator();
 
-		return downStreamVertex.getInEdges().size() == 1
+		return downStreamVertex.getInEdges().size() == 1    //下游节点只有一个输入
 				&& outOperator != null
 				&& headOperator != null
-				&& upStreamVertex.isSameSlotSharingGroup(downStreamVertex)
+				&& upStreamVertex.isSameSlotSharingGroup(downStreamVertex)    //在同一个slot共享组中
+
+				//上下游算子的 chainning 策略，要允许chainning
+				//默认的是 ALWAYS
+				//在添加算子时，也可以强制使用 disableChain 设置为 NEVER
 				&& outOperator.getChainingStrategy() == ChainingStrategy.ALWAYS
 				&& (headOperator.getChainingStrategy() == ChainingStrategy.HEAD ||
 				headOperator.getChainingStrategy() == ChainingStrategy.ALWAYS)
+
+			    //上下游节点之间的数据传输方式必须是FORWARD，而不能是REBALANCE等其它模式
 				&& (edge.getPartitioner() instanceof ForwardPartitioner)
-				&& upStreamVertex.getParallelism() == downStreamVertex.getParallelism()
+				&& upStreamVertex.getParallelism() == downStreamVertex.getParallelism()  //上下游节点的并行度要一致
 				&& isChainingEnabled;
 	}
 }

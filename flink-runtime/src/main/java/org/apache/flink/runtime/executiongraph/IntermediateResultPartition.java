@@ -24,24 +24,33 @@ import org.apache.flink.runtime.jobgraph.IntermediateResultPartitionID;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * 每个 ExecutionVertex 对应 IntermediateResult 中的一个 IntermediateResultPartition
+ */
 public class IntermediateResultPartition {
 
-	private final IntermediateResult totalResult;
+	private final IntermediateResult totalResult;  //当前partiton属于哪个IntermediateResult
 
-	private final ExecutionVertex producer;
+	private final ExecutionVertex producer;  	   //上游承接哪个 ExecutionVertex 作为 生产者
 
-	private final int partitionNumber;
+	private final int partitionNumber;		      //subtask index 作为 partitionNumber(相当于partiton id)
 
 	private final IntermediateResultPartitionID partitionId;
 
-	private List<List<ExecutionEdge>> consumers;
+	private List<List<ExecutionEdge>> consumers;  //下游的 ExecutionEdge s
 
+	/**
+	 * 创建 ExecutionVertex 的时候，创建下游对应 IntermediateResult 中的一个 IntermediateResultPartition
+	 * @param totalResult   //当前partiton属于哪个IntermediateResult
+	 * @param producer		//上游承接哪个 ExecutionVertex 作为 生产者
+	 * @param partitionNumber  //subtask index 作为 partitionNumber(相当于partiton id)
+	 */
 	public IntermediateResultPartition(IntermediateResult totalResult, ExecutionVertex producer, int partitionNumber) {
 		this.totalResult = totalResult;
 		this.producer = producer;
 		this.partitionNumber = partitionNumber;
-		this.consumers = new ArrayList<List<ExecutionEdge>>(0);
-		this.partitionId = new IntermediateResultPartitionID();
+		this.consumers = new ArrayList<List<ExecutionEdge>>(0); //初始化下游的 ExecutionEdge s
+		this.partitionId = new IntermediateResultPartitionID(); //随机指定一个id
 	}
 
 	public ExecutionVertex getProducer() {

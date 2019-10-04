@@ -257,12 +257,12 @@ public class StreamGraphGenerator {
 
 		Collection<Integer> transformedIds = transform(input);
 		for (Integer transformedId: transformedIds) {
-			int virtualId = StreamTransformation.getNewNodeId();
-			streamGraph.addVirtualPartitionNode(transformedId, virtualId, partition.getPartitioner());
+			int virtualId = StreamTransformation.getNewNodeId();  //生成一个虚拟的 算子id，
+			streamGraph.addVirtualPartitionNode(transformedId, virtualId, partition.getPartitioner());  //把生成的虚拟partition节点加入streamGraph；
 			resultIds.add(virtualId);
 		}
 
-		return resultIds;
+		return resultIds;  //最终返回的也是生成的虚拟节点，
 	}
 
 	/**
@@ -485,10 +485,11 @@ public class StreamGraphGenerator {
 	private <T> Collection<Integer> transformSource(SourceTransformation<T> source) {
 		String slotSharingGroup = determineSlotSharingGroup(source.getSlotSharingGroup(), Collections.emptyList());
 
+		//加入 Source StreamNode
 		streamGraph.addSource(source.getId(),
 				slotSharingGroup,
 				source.getCoLocationGroupKey(),
-				source.getOperator(), //Stream
+				source.getOperator(),   //StreamOperator
 				null,
 				source.getOutputType(),
 				"Source: " + source.getName());
@@ -543,7 +544,7 @@ public class StreamGraphGenerator {
 	 * wired the inputs to this new node.
 	 */
 
-	// 单个输入类型：filter、map等算子都属于此类型；
+	// 单个输入类型：filter、map 等算子都属于此类型；
 	private <IN, OUT> Collection<Integer> transformOneInputTransform(OneInputTransformation<IN, OUT> transform) {
 
 		// 核心：递归调用：先处理这个算子的input，所以说StreamGraph的生成是从sink开始的
@@ -581,7 +582,7 @@ public class StreamGraphGenerator {
 		streamGraph.setMaxParallelism(transform.getId(), transform.getMaxParallelism());
 
 		//为当前节点和它的依赖节点建立边
-		//这里可以看到之前提到的select union partition等逻辑节点被合并入edge 的过程
+		//这里可以看到之前提到的 select union partition 等逻辑节点被合并入edge 的过程
 		for (Integer inputId: inputIds) {
 			streamGraph.addEdge(inputId, transform.getId(), 0);
 		}

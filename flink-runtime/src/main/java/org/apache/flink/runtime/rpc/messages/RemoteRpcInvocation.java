@@ -51,7 +51,7 @@ public class RemoteRpcInvocation implements RpcInvocation, Serializable {
 		final Object[] args) throws IOException {
 
 		serializedMethodInvocation = new SerializedValue<>(new RemoteRpcInvocation.MethodInvocation(methodName, parameterTypes, args));
-		methodInvocation = null;
+		methodInvocation = null; //置为空，下次获取的时候，再反序列化
 	}
 
 	@Override
@@ -139,6 +139,7 @@ public class RemoteRpcInvocation implements RpcInvocation, Serializable {
 
 	/**
 	 * Wrapper class for the method invocation information
+	 * 实际的参数都封装在这个类里了
 	 */
 	private static final class MethodInvocation implements Serializable {
 		private static final long serialVersionUID = 9187962608946082519L;

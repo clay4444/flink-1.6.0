@@ -76,6 +76,11 @@ import static org.apache.flink.runtime.execution.ExecutionState.FINISHED;
  * The ExecutionVertex is a parallel subtask of the execution. It may be executed once, or several times, each of
  * which time it spawns an {@link Execution}.
  */
+
+/**
+ * Flink Job 是可以指定任务的并行度的，在实际运行时，会有多个并行的任务同时在执行，对应到这里就是 ExecutionVertex。
+ * ExecutionVertex 是并行任务的一个子任务，算子的并行度是多少，那么就会有多少个 ExecutionVertex。
+ */
 public class ExecutionVertex implements AccessExecutionVertex, Archiveable<ArchivedExecutionVertex> {
 
 	private static final Logger LOG = ExecutionGraph.LOG;
@@ -84,13 +89,13 @@ public class ExecutionVertex implements AccessExecutionVertex, Archiveable<Archi
 
 	// --------------------------------------------------------------------------------------------
 
-	private final ExecutionJobVertex jobVertex;
+	private final ExecutionJobVertex jobVertex;   //属于哪一个 ExecutionJobVertex 的 subtask
 
-	private final Map<IntermediateResultPartitionID, IntermediateResultPartition> resultPartitions;
+	private final Map<IntermediateResultPartitionID, IntermediateResultPartition> resultPartitions;   // < 随机生成的partitionid，具体的partition > ：保存在下游的IntermediateResult中创建的partition
 
-	private final ExecutionEdge[][] inputEdges;
+	private final ExecutionEdge[][] inputEdges;  //@todo: 这里为啥是个二维数组呢？ 因为一个JobVertex后面可能出现两个 IntermediateDataSet(两个不同的算子)，所以第一维指的是IntermediateDataSet，第二位指定的是并行度；
 
-	private final int subTaskIndex;
+	private final int subTaskIndex;    			//subtask 对应的 index 索引
 
 	private final EvictingBoundedList<Execution> priorExecutions;
 
@@ -102,7 +107,8 @@ public class ExecutionVertex implements AccessExecutionVertex, Archiveable<Archi
 	private volatile CoLocationConstraint locationConstraint;
 
 	/** The current or latest execution attempt of this vertex's task. */
-	private volatile Execution currentExecution;	// this field must never be null
+	private volatile Execution currentExecution;	// this field must never be null  Execution 是对 ExecutionVertex 的一次执行，通过 ExecutionAttemptId 来唯一标识。
+
 
 	// --------------------------------------------------------------------------------------------
 
@@ -138,10 +144,17 @@ public class ExecutionVertex implements AccessExecutionVertex, Archiveable<Archi
 	 * @param maxPriorExecutionHistoryLength
 	 *            The number of prior Executions (= execution attempts) to keep.
 	 */
+
+	/**
+	 * 创建 ExecutionJobVertex 的时候根据 jobVertex并行度 创建对应个数的 ExecutionVertex
+	 * @param jobVertex
+	 * @param subTaskIndex
+	 * @param producedDataSets
+	 */
 	public ExecutionVertex(
-			ExecutionJobVertex jobVertex,
-			int subTaskIndex,
-			IntermediateResult[] producedDataSets,
+			ExecutionJobVertex jobVertex,  // jobVertex
+			int subTaskIndex,   		//index
+			IntermediateResult[] producedDataSets,  //下游的IntermediateResult，它的个数对应 jobVertex 中 IntermediateDataSet 的个数
 			Time timeout,
 			long initialGlobalModVersion,
 			long createTimestamp,
@@ -154,20 +167,20 @@ public class ExecutionVertex implements AccessExecutionVertex, Archiveable<Archi
 
 		this.resultPartitions = new LinkedHashMap<>(producedDataSets.length, 1);
 
-		for (IntermediateResult result : producedDataSets) {
-			IntermediateResultPartition irp = new IntermediateResultPartition(result, this, subTaskIndex);
-			result.setPartition(subTaskIndex, irp);
+		for (IntermediateResult result : producedDataSets) { //在每个 IntermediateResult 中创建一个 IntermediateResultPartition(没问题，每个ExecutionVertex对应IntermediateResult中的一个partition)
+			IntermediateResultPartition irp = new IntermediateResultPartition(result, this, subTaskIndex); //创建IntermediateResult中的partition
+			result.setPartition(subTaskIndex, irp); //为 IntermediateResult 设置创建对应的partition
 
 			resultPartitions.put(irp.getPartitionId(), irp);
 		}
 
-		this.inputEdges = new ExecutionEdge[jobVertex.getJobVertex().getInputs().size()][];
+		this.inputEdges = new ExecutionEdge[jobVertex.getJobVertex().getInputs().size()][];  //为了简单理解，可以按一维来看，
 
 		this.priorExecutions = new EvictingBoundedList<>(maxPriorExecutionHistoryLength);
 
-		this.currentExecution = new Execution(
+		this.currentExecution = new Execution(    //创建Execution，代表ExecutionVertex的一次执行；
 			getExecutionGraph().getFutureExecutor(),
-			this,
+			this,  //执行哪个 ExecutionVertex
 			0,
 			initialGlobalModVersion,
 			createTimestamp,
@@ -182,7 +195,7 @@ public class ExecutionVertex implements AccessExecutionVertex, Archiveable<Archi
 			this.locationConstraint = null;
 		}
 
-		getExecutionGraph().registerExecution(currentExecution);
+		getExecutionGraph().registerExecution(currentExecution); //往 executionGraph中注册一次执行；
 
 		this.timeout = timeout;
 	}
@@ -364,13 +377,13 @@ public class ExecutionVertex implements AccessExecutionVertex, Archiveable<Archi
 
 		}
 
-		this.inputEdges[inputNumber] = edges;
+		this.inputEdges[inputNumber] = edges;  //建立当前ExecutionVertex的输入边ExecutionEdge，此时ExecutionEdge和下游的ExecutionVertex就连接起来了；
 
 		// add the consumers to the source
 		// for now (until the receiver initiated handshake is in place), we need to register the
 		// edges as the execution graph
 		for (ExecutionEdge ee : edges) {
-			ee.getSource().addConsumer(ee, consumerNumber);
+			ee.getSource().addConsumer(ee, consumerNumber); //为source上游的IntermediateResultPartition添加 ExecutionEdge，此时上游的IntermediateResultPartition和ExecutionEdge就连接起来了；
 		}
 	}
 
