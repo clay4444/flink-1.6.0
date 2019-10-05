@@ -330,12 +330,15 @@ public class TaskManagerRunner implements FatalErrorHandler, AutoCloseableAsync 
 	//  Static utilities
 	// --------------------------------------------------------------------------------------------
 
+	/**
+	 * 启动具体的TaskManager (TaskExecutor)
+	 */
 	public static TaskExecutor startTaskManager(
-			Configuration configuration,
-			ResourceID resourceID,
-			RpcService rpcService,
-			HighAvailabilityServices highAvailabilityServices,
-			HeartbeatServices heartbeatServices,
+			Configuration configuration, 	 //config
+			ResourceID resourceID, 			 //random
+			RpcService rpcService, 		 //taskManagerRpcService
+			HighAvailabilityServices highAvailabilityServices,  //haService, miniCluster下是 EmbeddedHaServices
+			HeartbeatServices heartbeatServices,    //封装着心跳间隔 和 超时时间
 			MetricRegistry metricRegistry,
 			BlobCacheService blobCacheService,
 			boolean localCommunicationOnly,
@@ -368,6 +371,7 @@ public class TaskManagerRunner implements FatalErrorHandler, AutoCloseableAsync 
 
 		TaskManagerConfiguration taskManagerConfiguration = TaskManagerConfiguration.fromConfiguration(configuration);
 
+		//最终创建 TaskExecutor
 		return new TaskExecutor(
 			rpcService,
 			taskManagerConfiguration,

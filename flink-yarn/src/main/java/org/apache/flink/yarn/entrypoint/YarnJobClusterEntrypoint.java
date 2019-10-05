@@ -56,6 +56,9 @@ import java.util.concurrent.CompletableFuture;
 
 /**
  * Entry point for Yarn per-job clusters.
+ *
+ * yarn perjob 模式启动 flink 集群
+ * 这个主类是 AppMaster container0 中 yarn 启动的；
  */
 public class YarnJobClusterEntrypoint extends JobClusterEntrypoint {
 
@@ -170,6 +173,6 @@ public class YarnJobClusterEntrypoint extends JobClusterEntrypoint {
 			configuration,
 			workingDirectory);
 
-		yarnJobClusterEntrypoint.startCluster();
+		yarnJobClusterEntrypoint.startCluster();  // 启动 flink 集群，后续的过程又一致了，创建ha等服务，启动rm(注意这里是YarnResourceManager)、dispatcher(也是miniDispatcher)等
 	}
 }

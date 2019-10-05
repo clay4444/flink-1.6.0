@@ -20,6 +20,14 @@ package org.apache.flink.runtime.rpc;
 
 /**
  * Rpc gateway interface which has to be implemented by Rpc gateways.
+ *
+ * 主要的代理实现接口
+ *  1.TaskExecutorGateway
+ *  2.JobManagerGateway
+ *  3.JobMasterGateway
+ *  4.ResourceManagerGateway
+ *  5.DispatcherGateway
+ *  .....
  */
 public interface RpcGateway {
 

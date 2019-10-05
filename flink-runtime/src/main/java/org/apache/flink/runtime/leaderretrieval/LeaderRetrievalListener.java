@@ -26,6 +26,10 @@ import java.util.UUID;
  * Classes which want to be notified about a changing leader by the {@link LeaderRetrievalService}
  * have to implement this interface.
  */
+
+/**
+ * 具体 leader切换 的监听器，
+ */
 public interface LeaderRetrievalListener {
 
 	/**
@@ -33,6 +37,8 @@ public interface LeaderRetrievalListener {
 	 *
 	 * @param leaderAddress The address of the new leader
 	 * @param leaderSessionID The new leader session ID
+	 *
+	 * 当leader选举结束后，这个方法将会被 LeaderRetrievalService 调用；
 	 */
 	void notifyLeaderAddress(@Nullable String leaderAddress, @Nullable UUID leaderSessionID);
 
@@ -41,6 +47,8 @@ public interface LeaderRetrievalListener {
 	 * assures that the {@link LeaderRetrievalListener} is aware of any problems occurring in the
 	 * {@link LeaderRetrievalService} thread.
 	 * @param exception
+	 *
+	 * leader选举出现异常的时候，这个方法将会被 LeaderRetrievalService 调用
 	 */
 	void handleError(Exception exception);
 }

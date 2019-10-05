@@ -133,6 +133,8 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
 /**
  * TaskExecutor implementation. The task executor is responsible for the execution of multiple
  * {@link Task}.
+ *
+ * tm 需要代理的接口的具体实现
  */
 public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 
@@ -193,7 +195,7 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 	// --------- resource manager --------
 
 	@Nullable
-	private ResourceManagerAddress resourceManagerAddress;
+	private ResourceManagerAddress resourceManagerAddress;   //resourceManager 的地址
 
 	@Nullable
 	private EstablishedResourceManagerConnection establishedResourceManagerConnection;
@@ -204,6 +206,9 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 	@Nullable
 	private UUID currentRegistrationTimeoutId;
 
+	/**
+	 * mini cluster 创建tm的时候，最终调用到这里；创建一个 TaskExecutor；
+	 */
 	public TaskExecutor(
 			RpcService rpcService,
 			TaskManagerConfiguration taskManagerConfiguration,
@@ -214,13 +219,14 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 			BlobCacheService blobCacheService,
 			FatalErrorHandler fatalErrorHandler) {
 
-		super(rpcService, AkkaRpcServiceUtils.createRandomName(TASK_MANAGER_NAME));
+		//调用父类构造器的过程中，初始化了 rpcServer，这是一个代理对象，后续方法的调用都通过这个代理对象调用； 还创建了一个actor，actor中封装了这个实际的 TaskExecutor EndPoint
+		super(rpcService, AkkaRpcServiceUtils.createRandomName(TASK_MANAGER_NAME)); //
 
 		checkArgument(taskManagerConfiguration.getNumberSlots() > 0, "The number of slots has to be larger than 0.");
 
 		this.taskManagerConfiguration = checkNotNull(taskManagerConfiguration);
 		this.taskExecutorServices = checkNotNull(taskExecutorServices);
-		this.haServices = checkNotNull(haServices);
+		this.haServices = checkNotNull(haServices);							//haService
 		this.fatalErrorHandler = checkNotNull(fatalErrorHandler);
 		this.taskManagerMetricGroup = checkNotNull(taskManagerMetricGroup);
 		this.blobCacheService = checkNotNull(blobCacheService);
@@ -231,6 +237,8 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 		this.taskManagerLocation = taskExecutorServices.getTaskManagerLocation();
 		this.localStateStoresManager = taskExecutorServices.getTaskManagerStateStore();
 		this.networkEnvironment = taskExecutorServices.getNetworkEnvironment();
+
+		//需要和resourceManager进行通信，所以通过 ResourceManagerLeaderRetriever，返回一个 EmbeddedLeaderRetrievalService，通过它来获取rm leader的地址；
 		this.resourceManagerLeaderRetriever = haServices.getResourceManagerLeaderRetriever();
 
 		this.jobManagerConnections = new HashMap<>(4);
@@ -261,12 +269,18 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 	//  Life cycle
 	// ------------------------------------------------------------------------
 
+	//创建完taskExecutor之后，立即调用了 start 方法；
 	@Override
 	public void start() throws Exception {
-		super.start();
+		super.start();  // rpcServer.start();  向初始化 TaskExecutor 创建的actor发了一条start消息；
 
 		// start by connecting to the ResourceManager
 		try {
+			/**
+			 * 开始监听 resourceManager 的leader 地址； 内部类的方式；建立链接
+			 * 连接被封装为 TaskExecutorToResourceManagerConnection。一旦获取 ResourceManager 的 leader 被确定后，就可以获取到 ResourceManager 对应的 RpcGateway，
+			 * 接下来就可以通过 RPC 调用发起 ResourceManager#registerTaskExecutor 注册流程。注册成功后，TaskExecutor 向 ResourceManager 报告其资源（主要是 slots）情况。
+			 */
 			resourceManagerLeaderRetriever.start(new ResourceManagerLeaderListener());
 		} catch (Exception e) {
 			onFatalError(e);
@@ -276,7 +290,7 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 		taskSlotTable.start(new SlotActionsImpl());
 
 		// start the job leader service
-		jobLeaderService.start(getAddress(), getRpcService(), haServices, new JobLeaderListenerImpl());
+		jobLeaderService.start(getAddress(), getRpcService(), haServices, new JobLeaderListenerImpl());  //jobManager leader地址；内部类的方式；建立链接
 
 		fileCache = new FileCache(taskManagerConfiguration.getTmpDirectories(), blobCacheService.getPermanentBlobService());
 
@@ -904,7 +918,7 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 		log.info("Connecting to ResourceManager {}.", resourceManagerAddress);
 
 		resourceManagerConnection =
-			new TaskExecutorToResourceManagerConnection(
+			new TaskExecutorToResourceManagerConnection(  //和ResourceManager的连接被定义为 TaskExecutorToResourceManagerConnection
 				log,
 				getRpcService(),
 				getAddress(),
@@ -914,7 +928,7 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 				resourceManagerAddress.getAddress(),
 				resourceManagerAddress.getResourceManagerId(),
 				getMainThreadExecutor(),
-				new ResourceManagerRegistrationListener());
+				new ResourceManagerRegistrationListener()); //猜测：建立链接之后，就会通过回调，触发这个监听器的方法，这个监听器也是一个内部类，
 		resourceManagerConnection.start();
 	}
 
@@ -924,6 +938,7 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 			InstanceID taskExecutorRegistrationId,
 			ClusterInformation clusterInformation) {
 
+		//通过rpc向resourceManager 报告slot 使用情况；
 		final CompletableFuture<Acknowledge> slotReportResponseFuture = resourceManagerGateway.sendSlotReport(
 			getResourceID(),
 			taskExecutorRegistrationId,
@@ -1468,11 +1483,13 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 
 	/**
 	 * The listener for leader changes of the resource manager.
+	 * 监听 resourceManager 的leader change 事件的监听器；
 	 */
 	private final class ResourceManagerLeaderListener implements LeaderRetrievalListener {
 
 		@Override
 		public void notifyLeaderAddress(final String leaderAddress, final UUID leaderSessionID) {
+			//获得 ResourceManager 的地址， 和 ResourceManager 建立连接
 			runAsync(
 				() -> notifyOfNewResourceManagerLeader(
 					leaderAddress,
@@ -1492,6 +1509,7 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 			final JobID jobId,
 			final JobMasterGateway jobManagerGateway,
 			final JMTMRegistrationSuccess registrationMessage) {
+			//和 JobManager 建立连接
 			runAsync(
 				() ->
 					establishJobManagerConnection(
@@ -1516,21 +1534,25 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 		}
 	}
 
+	/**
+	 * 和resourceManager建立链接之后，触发的回调；
+	 */
 	private final class ResourceManagerRegistrationListener implements RegistrationConnectionListener<TaskExecutorToResourceManagerConnection, TaskExecutorRegistrationSuccess> {
 
+		//这应该就是回调方法；
 		@Override
 		public void onRegistrationSuccess(TaskExecutorToResourceManagerConnection connection, TaskExecutorRegistrationSuccess success) {
 			final ResourceID resourceManagerId = success.getResourceManagerId();
 			final InstanceID taskExecutorRegistrationId = success.getRegistrationId();
 			final ClusterInformation clusterInformation = success.getClusterInformation();
-			final ResourceManagerGateway resourceManagerGateway = connection.getTargetGateway();
+			final ResourceManagerGateway resourceManagerGateway = connection.getTargetGateway();  //获取到ResourceManagerGateway，使用rpc机制调用它的方法；
 
 			runAsync(
 				() -> {
 					// filter out outdated connections
 					//noinspection ObjectEquality
 					if (resourceManagerConnection == connection) {
-						establishResourceManagerConnection(
+						establishResourceManagerConnection(  //核心，向rm报告slot使用情况；
 							resourceManagerGateway,
 							resourceManagerId,
 							taskExecutorRegistrationId,

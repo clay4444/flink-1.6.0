@@ -24,6 +24,10 @@ import java.util.UUID;
  * Interface which has to be implemented to take part in the leader election process of the
  * {@link LeaderElectionService}.
  */
+
+/**
+ * 参与竞选的对象
+ */
 public interface LeaderContender {
 
 	/**
@@ -31,6 +35,10 @@ public interface LeaderContender {
 	 * instance as the new leader. The method is called with the new leader session ID.
 	 *
 	 * @param leaderSessionID New leader session ID
+	 */
+	/**
+	 * 当一个 LeaderContender 竞选成功了，会通过 LeaderContender#grantLeadership 得到通知。
+	 * @param leaderSessionID
 	 */
 	void grantLeadership(UUID leaderSessionID);
 

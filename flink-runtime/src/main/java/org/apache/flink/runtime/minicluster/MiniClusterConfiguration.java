@@ -39,9 +39,9 @@ import static org.apache.flink.runtime.minicluster.RpcServiceSharing.SHARED;
  */
 public class MiniClusterConfiguration {
 
-	private final UnmodifiableConfiguration configuration;
+	private final UnmodifiableConfiguration configuration;  // configuration
 
-	private final int numTaskManagers;
+	private final int numTaskManagers;  // tm 个数
 
 	private final RpcServiceSharing rpcServiceSharing;
 
@@ -126,9 +126,9 @@ public class MiniClusterConfiguration {
 	 */
 	public static class Builder {
 		private Configuration configuration = new Configuration();
-		private int numTaskManagers = 1;
+		private int numTaskManagers = 1;   //默认就启一个 tm
 		private int numSlotsPerTaskManager = 1;
-		private RpcServiceSharing rpcServiceSharing = SHARED;
+		private RpcServiceSharing rpcServiceSharing = SHARED;  //默认所有组件(tm,jm,rm)都使用一个共享的rpcService；
 		@Nullable
 		private String commonBindAddress = null;
 

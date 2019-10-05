@@ -56,6 +56,8 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
 /**
  * {@link JobClusterEntrypoint} which is started with a job in a predefined
  * location.
+ *
+ * 启动一个flink Standalone perjob 集群的入口类；
  */
 public final class StandaloneJobClusterEntryPoint extends JobClusterEntrypoint {
 
@@ -136,6 +138,7 @@ public final class StandaloneJobClusterEntryPoint extends JobClusterEntrypoint {
 		SignalHandler.register(LOG);
 		JvmShutdownSafeguard.installAsShutdownHook(LOG);
 
+		//解析命令行参数
 		final CommandLineParser<StandaloneJobClusterConfiguration> commandLineParser = new CommandLineParser<>(new StandaloneJobClusterConfigurationParserFactory());
 		StandaloneJobClusterConfiguration clusterConfiguration = null;
 
@@ -147,6 +150,7 @@ public final class StandaloneJobClusterEntryPoint extends JobClusterEntrypoint {
 			System.exit(1);
 		}
 
+		//加载配置；
 		Configuration configuration = loadConfiguration(clusterConfiguration);
 
 		configuration.setString(ClusterEntrypoint.EXECUTION_MODE, ExecutionMode.DETACHED.toString());
@@ -155,7 +159,7 @@ public final class StandaloneJobClusterEntryPoint extends JobClusterEntrypoint {
 			clusterConfiguration.getJobClassName(),
 			clusterConfiguration.getArgs());
 
-		entrypoint.startCluster();
+		entrypoint.startCluster(); //启动集群
 	}
 
 }

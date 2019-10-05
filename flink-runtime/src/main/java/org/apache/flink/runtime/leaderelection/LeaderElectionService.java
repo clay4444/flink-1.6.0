@@ -34,6 +34,10 @@ import java.util.UUID;
  * the contender has received the new leader session ID and that it can now be published for
  * leader retrieval services.
  */
+
+/**
+ * leader的选举服务
+ */
 public interface LeaderElectionService {
 
 	/**

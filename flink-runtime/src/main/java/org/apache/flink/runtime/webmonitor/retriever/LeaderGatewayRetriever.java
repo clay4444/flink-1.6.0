@@ -33,6 +33,14 @@ import java.util.concurrent.atomic.AtomicReference;
  *
  * @param <T> type of the gateway to retrieve
  */
+
+/**
+ * GatewayRetriver 接口用于获取 RpcGateway，
+ * LeaderRetriever 接口实现了LeaderRetrievalListener接口，所以可以获取 Leader 地址
+ * 所以：
+ *  1.可以在Leader选举完成后得到 Leader 地址
+ *  2.可以获取到 Leader 的 RpcGateway (动态代理对象)
+ */
 public abstract class LeaderGatewayRetriever<T extends RpcGateway> extends LeaderRetriever implements GatewayRetriever<T> {
 
 	private final AtomicReference<CompletableFuture<T>> atomicGatewayFuture;
@@ -78,7 +86,7 @@ public abstract class LeaderGatewayRetriever<T extends RpcGateway> extends Leade
 			}
 
 			// we couldn't resolve the gateway --> let's try again
-			final CompletableFuture<T> newGatewayFuture = createGateway(getLeaderFuture());
+			final CompletableFuture<T> newGatewayFuture = createGateway(getLeaderFuture());  //模板方法的设计模式，调用子类的createGateway实现；
 
 			// let's check if there was a concurrent createNewFuture call
 			if (atomicGatewayFuture.compareAndSet(currentGatewayFuture, newGatewayFuture)) {

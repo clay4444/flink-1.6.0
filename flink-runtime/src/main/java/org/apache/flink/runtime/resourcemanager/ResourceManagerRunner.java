@@ -74,6 +74,7 @@ public class ResourceManagerRunner implements FatalErrorHandler, AutoCloseableAs
 			highAvailabilityServices,
 			rpcService.getScheduledExecutor());
 
+		//创建 StandaloneResourceManager，
 		this.resourceManager = new StandaloneResourceManager(
 			rpcService,
 			resourceManagerEndpointId,

@@ -208,7 +208,7 @@ public abstract class ResourceManager<WorkerType extends ResourceIDRetrievable>
 		initialize();
 
 		try {
-			leaderElectionService.start(this);
+			leaderElectionService.start(this);  //参与选举
 		} catch (Exception e) {
 			throw new ResourceManagerException("Could not start the leader election service.", e);
 		}

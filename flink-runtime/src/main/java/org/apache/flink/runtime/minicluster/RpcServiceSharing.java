@@ -22,6 +22,10 @@ package org.apache.flink.runtime.minicluster;
  * Enum which defines whether the mini cluster components use a shared RpcService
  * or whether every component gets its own dedicated RpcService started.
  */
+
+/**
+ * 定义mini cluster 组件是否使用一个共享的 RpcService 作为全局的RpcService，还是每个组件(jm,tm,rm)都有自己专用的 rpcService服务
+ */
 public enum RpcServiceSharing {
 	SHARED, // a single shared rpc service
 	DEDICATED // every component gets his own dedicated rpc service

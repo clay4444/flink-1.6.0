@@ -51,6 +51,7 @@ import java.util.concurrent.Executor;
 
 /**
  * Base class for per-job cluster entry points.
+ * 启动 per Job 模式集群的 基类
  */
 public abstract class JobClusterEntrypoint extends ClusterEntrypoint {
 

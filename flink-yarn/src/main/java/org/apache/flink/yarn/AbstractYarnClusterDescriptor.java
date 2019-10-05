@@ -456,6 +456,9 @@ public abstract class AbstractYarnClusterDescriptor implements ClusterDescriptor
 	}
 
 	/**
+	 * 启动YarnCluster的真正的启动逻辑
+	 * 这个方法将会阻塞，直到 AppMaster(其中部署jm) 已经在yarn部署成功了
+	 *
 	 * This method will block until the ApplicationMaster/JobManager have been deployed on YARN.
 	 *
 	 * @param clusterSpecification Initial cluster specification for the Flink cluster to be deployed
@@ -492,7 +495,7 @@ public abstract class AbstractYarnClusterDescriptor implements ClusterDescriptor
 		isReadyForDeployment(clusterSpecification);
 
 		// ------------------ Check if the specified queue exists --------------------
-
+		//检查指定的yarn队列是否存在；
 		checkYarnQueues(yarnClient);
 
 		// ------------------ Add dynamic properties to local flinkConfiguraton ------
@@ -503,11 +506,14 @@ public abstract class AbstractYarnClusterDescriptor implements ClusterDescriptor
 
 		// ------------------ Check if the YARN ClusterClient has the requested resources --------------
 
-		// Create application via yarnClient
+		/**
+		 * Create application via yarnClient
+		 * 通过 yarnClient 创建一个 app
+		 */
 		final YarnClientApplication yarnApplication = yarnClient.createApplication();
 		final GetNewApplicationResponse appResponse = yarnApplication.getNewApplicationResponse();
 
-		Resource maxRes = appResponse.getMaximumResourceCapability();
+		Resource maxRes = appResponse.getMaximumResourceCapability(); 	//最大可用资源；
 
 		final ClusterResourceDescription freeClusterMem;
 		try {
@@ -539,10 +545,10 @@ public abstract class AbstractYarnClusterDescriptor implements ClusterDescriptor
 
 		flinkConfiguration.setString(ClusterEntrypoint.EXECUTION_MODE, executionMode.toString());
 
-		ApplicationReport report = startAppMaster(
+		ApplicationReport report = startAppMaster(  	//启动AppMaster
 			flinkConfiguration,
 			applicationName,
-			yarnClusterEntrypoint,
+			yarnClusterEntrypoint, // perjob模式 AppMaster 中会运行这个类 YarnJobClusterEntrypoint
 			jobGraph,
 			yarnClient,
 			yarnApplication,
@@ -693,6 +699,9 @@ public abstract class AbstractYarnClusterDescriptor implements ClusterDescriptor
 		}
 	}
 
+	/**
+	 * 启动一个 AppMaster
+	 */
 	public ApplicationReport startAppMaster(
 			Configuration configuration,
 			String applicationName,
@@ -966,7 +975,7 @@ public abstract class AbstractYarnClusterDescriptor implements ClusterDescriptor
 				"");
 		}
 
-		final ContainerLaunchContext amContainer = setupApplicationMasterContainer(
+		final ContainerLaunchContext amContainer = setupApplicationMasterContainer(    //container0
 			yarnClusterEntrypoint,
 			hasLogback,
 			hasLog4j,
@@ -1620,7 +1629,7 @@ public abstract class AbstractYarnClusterDescriptor implements ClusterDescriptor
 		}
 
 		startCommandValues.put("logging", logging);
-		startCommandValues.put("class", yarnClusterEntrypoint);
+		startCommandValues.put("class", yarnClusterEntrypoint);  // main class 类名
 		startCommandValues.put("redirects",
 			"1> " + ApplicationConstants.LOG_DIR_EXPANSION_VAR + "/jobmanager.out " +
 			"2> " + ApplicationConstants.LOG_DIR_EXPANSION_VAR + "/jobmanager.err");

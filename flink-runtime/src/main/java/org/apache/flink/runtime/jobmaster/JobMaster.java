@@ -995,6 +995,9 @@ public class JobMaster extends FencedRpcEndpoint<JobMasterId> implements JobMast
 
 	//-- job starting and stopping  -----------------------------------------------------------------
 
+	/**
+	 * 开始执行Job
+	 */
 	private Acknowledge startJobExecution(JobMasterId newJobMasterId) throws Exception {
 		validateRunsInMainThread();
 
@@ -1008,15 +1011,19 @@ public class JobMaster extends FencedRpcEndpoint<JobMasterId> implements JobMast
 
 		setNewFencingToken(newJobMasterId);
 
-		startJobMasterServices();
+		startJobMasterServices();  //主要是建立和rm的连接
 
 		log.info("Starting execution of job {} ({})", jobGraph.getName(), jobGraph.getJobID());
 
-		resetAndScheduleExecutionGraph();
+		resetAndScheduleExecutionGraph(); //真正执行 jobGraph
 
 		return Acknowledge.get();
 	}
 
+	/**
+	 * JobMaster 启动后会和 ResourceManager 建立连接，连接被封装为 ResourceManagerConnection。
+	 * 一旦连接建立之后，JobMaster 就可以通过 RPC 调用和 ResourceManager 进行通信了：
+	 */
 	private void startJobMasterServices() throws Exception {
 		// start the slot pool make sure the slot pool now accepts messages for this leader
 		slotPool.start(getFencingToken(), getAddress());
@@ -1093,6 +1100,9 @@ public class JobMaster extends FencedRpcEndpoint<JobMasterId> implements JobMast
 		jobManagerJobMetricGroup = newJobManagerJobMetricGroup;
 	}
 
+	/**
+	 * 真正执行job的方法
+	 */
 	private void resetAndScheduleExecutionGraph() throws Exception {
 		validateRunsInMainThread();
 
@@ -1113,9 +1123,12 @@ public class JobMaster extends FencedRpcEndpoint<JobMasterId> implements JobMast
 				getMainThreadExecutor());
 		}
 
-		executionGraphAssignedFuture.thenRun(this::scheduleExecutionGraph);
+		executionGraphAssignedFuture.thenRun(this::scheduleExecutionGraph);  //在这
 	}
 
+	/**
+	 * 最终调用到这里，开始根据 ExecutionGraph 调度任务；
+	 */
 	private void scheduleExecutionGraph() {
 		checkState(jobStatusListener == null);
 		// register self as job status change listener
@@ -1123,7 +1136,7 @@ public class JobMaster extends FencedRpcEndpoint<JobMasterId> implements JobMast
 		executionGraph.registerJobStatusListener(jobStatusListener);
 
 		try {
-			//executionGraph 最后一层图结构
+			//executionGraph 最后一层图结构，executionGraph 是在哪里生成的来？ jobMaster创建的时候就生成了；
 			executionGraph.scheduleForExecution();
 		}
 		catch (Throwable t) {

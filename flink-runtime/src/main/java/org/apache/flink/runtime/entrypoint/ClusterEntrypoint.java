@@ -187,7 +187,7 @@ public abstract class ClusterEntrypoint implements FatalErrorHandler {
 			SecurityContext securityContext = installSecurityContext(configuration);
 
 			securityContext.runSecured((Callable<Void>) () -> {
-				runCluster(configuration);
+				runCluster(configuration);  //看这
 
 				return null;
 			});
@@ -221,14 +221,40 @@ public abstract class ClusterEntrypoint implements FatalErrorHandler {
 		return SecurityUtils.getInstalledContext();
 	}
 
+	/**
+	 * 拉起集群：
+	 *
+	 * 1> initializeServices：初始化 RpcService， HighAvailabilityServices  等服务
+	 *
+	 * 这里生成的 HighAvailabilityServices 和 MiniCluster 模式下略有区别，由于各组件不在同一个进程中，因而需要从配置中加载配置：
+	 * 1）如果采用基于 Zookeeper 的 HA 模式，则创建 ZooKeeperHaServices，基于 zookeeper 获取 leader 通信地址
+	 * 2）如果没有配置 HA，则创建 StandaloneHaServices， 并从配置文件中获取各组件的 RPC 地址信息。
+	 *
+	 * 2> startClusterComponents：启动rm(StandaloneResourceManager)，dispatcher(MiniDispatcher)
+	 *
+	 * (以下是flink 1.9 的代码的过程，1.6的代码更简单一些，没有这些工厂类，直接创建的具体的rm和dispatcher )
+	 * 在 StandaloneJobClusterEntrypoint 中，生成 DispatcherResourceManagerComponent 的工厂类是 JobDispatcherResourceManagerComponentFactory，
+	 * 该厂类创建 JobDispatcherResourceManagerComponent：由 StandaloneResourceManagerFactory 创建 StandaloneResourceManager，由 JobDispatcherFactory 创建 MiniDispatcher。
+	 * 一个 MiniDispatcher 和一个 JobGraph 相绑定，一旦绑定的 JobGraph 执行结束，则关闭 MiniDispatcher，进而停止 JobManager 进程。
+	 *
+	 * Dispatcher 和 ResourceManager 服务内部的启动流程则和 MiniCluster#start 中介绍的一致，这里不再赘述。
+	 *
+	 * 3> tm的创建
+	 * TaskManager 的启动入口在 TaskManagerRunner 中，它的启动流程和 MiniCluster 模式下基本一致，区别在于：
+	 * 1)运行在独立的进程中， 2）HighAvailabilityServices 的创建要依赖配置文件获取。
+	 * TaskManagerRunner 会创建 TaskExecutor，TaskExecutor 通过 HighAvailabilityServices 获取 ResourceManager 的通信地址，并和 ResourceManager 建立连接。
+	 */
 	protected void runCluster(Configuration configuration) throws Exception {
 		synchronized (lock) {
+
+			//初始化 RpcService， HighAvailabilityServices  等服务
 			initializeServices(configuration);
 
 			// write host information into configuration
 			configuration.setString(JobManagerOptions.ADDRESS, commonRpcService.getAddress());
 			configuration.setInteger(JobManagerOptions.PORT, commonRpcService.getPort());
 
+			//启动dispatcher，ResourceManager 等组件
 			startClusterComponents(
 				configuration,
 				commonRpcService,
@@ -254,6 +280,9 @@ public abstract class ClusterEntrypoint implements FatalErrorHandler {
 		}
 	}
 
+	/**
+	 * 初始化 RpcService， HighAvailabilityServices  等服务
+	 */
 	protected void initializeServices(Configuration configuration) throws Exception {
 
 		LOG.info("Initializing cluster services.");
@@ -293,6 +322,10 @@ public abstract class ClusterEntrypoint implements FatalErrorHandler {
 		}
 	}
 
+	/**
+	 * 启动 dispatcher，ResourceManager 等组件
+	 * 和 miniCluster 的整体过程大概是一样的，具体的解释看 miniCluster#start 方法就可以；
+	 */
 	protected void startClusterComponents(
 			Configuration configuration,
 			RpcService rpcService,
@@ -335,7 +368,7 @@ public abstract class ClusterEntrypoint implements FatalErrorHandler {
 			LOG.debug("Starting Dispatcher REST endpoint.");
 			webMonitorEndpoint.start();
 
-			resourceManager = createResourceManager(
+			resourceManager = createResourceManager(   //创建 ResourceManager
 				configuration,
 				ResourceID.generate(),
 				rpcService,
@@ -350,7 +383,7 @@ public abstract class ClusterEntrypoint implements FatalErrorHandler {
 
 			final HistoryServerArchivist historyServerArchivist = HistoryServerArchivist.createHistoryServerArchivist(configuration, webMonitorEndpoint);
 
-			dispatcher = createDispatcher(
+			dispatcher = createDispatcher(			//创建 Dispatcher
 				configuration,
 				rpcService,
 				highAvailabilityServices,
@@ -365,11 +398,11 @@ public abstract class ClusterEntrypoint implements FatalErrorHandler {
 				historyServerArchivist);
 
 			LOG.debug("Starting ResourceManager.");
-			resourceManager.start();
+			resourceManager.start();          //启动 ResourceManager
 			resourceManagerRetrievalService.start(resourceManagerGatewayRetriever);
 
 			LOG.debug("Starting Dispatcher.");
-			dispatcher.start();
+			dispatcher.start();   			  //启动 Dispatcher
 			dispatcherLeaderRetrievalService.start(dispatcherGatewayRetriever);
 		}
 	}
@@ -648,7 +681,7 @@ public abstract class ClusterEntrypoint implements FatalErrorHandler {
 	}
 
 	// --------------------------------------------------
-	// Abstract methods
+	// Abstract methods  模板方法，交给子类去实现；
 	// --------------------------------------------------
 
 	protected abstract Dispatcher createDispatcher(

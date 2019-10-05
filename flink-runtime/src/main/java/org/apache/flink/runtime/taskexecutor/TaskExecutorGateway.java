@@ -41,10 +41,14 @@ import java.util.concurrent.CompletableFuture;
 
 /**
  * {@link TaskExecutor} RPC gateway interface.
+ *
+ * RpcGateway ：用于远程代理的接口
+ * tm 需要代理的接口；
  */
 public interface TaskExecutorGateway extends RpcGateway {
 
 	/**
+	 * 从tm请求slot
 	 * Requests a slot from the TaskManager.
 	 *
 	 * @param slotId slot id for the request
@@ -72,6 +76,7 @@ public interface TaskExecutorGateway extends RpcGateway {
 		@RpcTimeout Time timeout);
 
 	/**
+	 * 往TaskExecutor提交一个 Task
 	 * Submit a {@link Task} to the {@link TaskExecutor}.
 	 *
 	 * @param tdd describing the task to submit
@@ -105,6 +110,8 @@ public interface TaskExecutorGateway extends RpcGateway {
 	void failPartition(ExecutionAttemptID executionAttemptID);
 
 	/**
+	 * 为给定的Task触发checkpoint，checkpoint通过checkpoint ID 和 checkpoint timestamp 唯一定位；
+	 *
 	 * Trigger the checkpoint for the given task. The checkpoint is identified by the checkpoint ID
 	 * and the checkpoint timestamp.
 	 *
@@ -117,6 +124,8 @@ public interface TaskExecutorGateway extends RpcGateway {
 	CompletableFuture<Acknowledge> triggerCheckpoint(ExecutionAttemptID executionAttemptID, long checkpointID, long checkpointTimestamp, CheckpointOptions checkpointOptions);
 
 	/**
+	 * 为给定的task的checkpoint进行确认；
+	 *
 	 * Confirm a checkpoint for the given task. The checkpoint is identified by the checkpoint ID
 	 * and the checkpoint timestamp.
 	 *
@@ -128,6 +137,8 @@ public interface TaskExecutorGateway extends RpcGateway {
 	CompletableFuture<Acknowledge> confirmCheckpoint(ExecutionAttemptID executionAttemptID, long checkpointId, long checkpointTimestamp);
 
 	/**
+	 * stop 给定的task
+	 *
 	 * Stop the given task.
 	 *
 	 * @param executionAttemptID identifying the task
@@ -137,6 +148,7 @@ public interface TaskExecutorGateway extends RpcGateway {
 	CompletableFuture<Acknowledge> stopTask(ExecutionAttemptID executionAttemptID, @RpcTimeout Time timeout);
 
 	/**
+	 * 取消给定的task
 	 * Cancel the given task.
 	 *
 	 * @param executionAttemptID identifying the task
@@ -146,6 +158,8 @@ public interface TaskExecutorGateway extends RpcGateway {
 	CompletableFuture<Acknowledge> cancelTask(ExecutionAttemptID executionAttemptID, @RpcTimeout Time timeout);
 
 	/**
+	 * 来自job manager 的心跳
+	 *
 	 * Heartbeat request from the job manager.
 	 *
 	 * @param heartbeatOrigin unique id of the job manager
@@ -153,6 +167,8 @@ public interface TaskExecutorGateway extends RpcGateway {
 	void heartbeatFromJobManager(ResourceID heartbeatOrigin);
 
 	/**
+	 * 来自 resourceManager 的心跳
+	 *
 	 * Heartbeat request from the resource manager.
 	 *
 	 * @param heartbeatOrigin unique id of the resource manager
@@ -175,6 +191,8 @@ public interface TaskExecutorGateway extends RpcGateway {
 	void disconnectResourceManager(Exception cause);
 
 	/**
+	 * 释放使用的slot
+	 *
 	 * Frees the slot with the given allocation ID.
 	 *
 	 * @param allocationId identifying the slot to free

@@ -146,7 +146,7 @@ public class MiniCluster implements JobExecutorService, AutoCloseableAsync {
 	@GuardedBy("lock")
 	private ResourceManagerRunner resourceManagerRunner;
 
-	private volatile TaskExecutor[] taskManagers;
+	private volatile TaskExecutor[] taskManagers;  //TaskExecutor
 
 	@GuardedBy("lock")
 	private DispatcherRestEndpoint dispatcherRestEndpoint;
@@ -167,7 +167,7 @@ public class MiniCluster implements JobExecutorService, AutoCloseableAsync {
 	private JobManagerMetricGroup jobManagerMetricGroup;
 
 	@GuardedBy("lock")
-	private RpcGatewayRetriever<DispatcherId, DispatcherGateway> dispatcherGatewayRetriever;
+	private RpcGatewayRetriever<DispatcherId, DispatcherGateway> dispatcherGatewayRetriever;  //通过它的createGateWay可以获取到 DispatcherGateway 的远程代理对象
 
 	/** Flag marking the mini cluster as started/running. */
 	private volatile boolean running;
@@ -202,7 +202,7 @@ public class MiniCluster implements JobExecutorService, AutoCloseableAsync {
 	}
 
 	// ------------------------------------------------------------------------
-	//  life cycle
+	//  life cycle  声明周期
 	// ------------------------------------------------------------------------
 
 	/**
@@ -214,9 +214,23 @@ public class MiniCluster implements JobExecutorService, AutoCloseableAsync {
 
 	/**
 	 * Starts the mini cluster, based on the configured properties.
-	 *
 	 * @throws Exception This method passes on any exception that occurs during the startup of
 	 *                   the mini cluster.
+	 *
+	 * 大致分为三个阶段
+	 * 	1.创建一些辅助的服务，如 RpcService， HighAvailabilityServices, BlobServer 等
+	 * 	2.启动 TaskManager
+	 * 	2.启动 Dispatcher， ResourceManager 等
+	 *
+	 * 基于 configutation 配置，启动 mini cluster，
+	 *  1. 创建RpcService，RpcService是RpcEndPoint的运行时环境，RpcEndPoint创建的时候就是通过 RpcService 来启动，并返回代理对象的；主要有三个，jobmanager，resourcemanager，taskmanager
+	 *  2. 创建 HighAvailabilityServices，它提供了获取 HA 相关所有服务的方法，包括：ResourceManager 选举服务及 Leader 获取 、Dispatcher 选举服务及 Leader 获取、任务状态的注册表、checkpoint recovery、blob store 等相关的服务
+	 * minicluster环境下，返回的是EmbeddedHaServices；细节看代码处的注释
+	 *  3. 启动ResourceManager，然后直接start启动，可以看到选举的过程；
+	 *  4. 启动tm，具体是创建了 TaskExecutor，然后start启动，可以看到和rm通信，并rpc汇报当前slot的过程；细节跟代码看注释
+	 *  5. 启动DispatcherRestEndpoint
+	 *  6. 启动Dispatcher(具体是StandaloneDispatcher)，然后start启动，也看到参与选举的过程；
+	 *
 	 */
 	public void start() throws Exception {
 		synchronized (lock) {
@@ -225,10 +239,10 @@ public class MiniCluster implements JobExecutorService, AutoCloseableAsync {
 			LOG.info("Starting Flink Mini Cluster");
 			LOG.debug("Using configuration {}", miniClusterConfiguration);
 
-			final Configuration configuration = miniClusterConfiguration.getConfiguration();
+			final Configuration configuration = miniClusterConfiguration.getConfiguration();   //configuration
 			final Time rpcTimeout = miniClusterConfiguration.getRpcTimeout();
-			final int numTaskManagers = miniClusterConfiguration.getNumTaskManagers();
-			final boolean useSingleRpcService = miniClusterConfiguration.getRpcServiceSharing() == RpcServiceSharing.SHARED;
+			final int numTaskManagers = miniClusterConfiguration.getNumTaskManagers();  // tm个数， 1
+			final boolean useSingleRpcService = miniClusterConfiguration.getRpcServiceSharing() == RpcServiceSharing.SHARED;  //true
 
 			try {
 				initializeIOFormatClasses(configuration);
@@ -236,6 +250,7 @@ public class MiniCluster implements JobExecutorService, AutoCloseableAsync {
 				LOG.info("Starting Metrics Registry");
 				metricRegistry = createMetricRegistry(configuration);
 
+				//1. 创建RpcService，
 				final RpcService jobManagerRpcService;
 				final RpcService resourceManagerRpcService;
 				final RpcService[] taskManagerRpcServices = new RpcService[numTaskManagers];
@@ -244,13 +259,13 @@ public class MiniCluster implements JobExecutorService, AutoCloseableAsync {
 				LOG.info("Starting RPC Service(s)");
 
 				// we always need the 'commonRpcService' for auxiliary calls
-				commonRpcService = createRpcService(configuration, rpcTimeout, false, null);
+				commonRpcService = createRpcService(configuration, rpcTimeout, false, null);  //创建一个共享的 AkkaRpcService
 
 				// TODO: Temporary hack until the metric query service is ported to the RpcEndpoint
 				final ActorSystem actorSystem = ((AkkaRpcService) commonRpcService).getActorSystem();
 				metricRegistry.startQueryService(actorSystem, null);
 
-				if (useSingleRpcService) {
+				if (useSingleRpcService) {    // 默认所有组件(tm,jm,rm)都使用一个共享的rpcService；
 					for (int i = 0; i < numTaskManagers; i++) {
 						taskManagerRpcServices[i] = commonRpcService;
 					}
@@ -281,19 +296,30 @@ public class MiniCluster implements JobExecutorService, AutoCloseableAsync {
 					this.resourceManagerRpcService = resourceManagerRpcService;
 				}
 
-				// create the high-availability services
+				// create the high-availability services   创建 高可用 服务
 				LOG.info("Starting high-availability services");
+
+				/**
+				 * 创建HighAvailabilityServices，返回的是 EmbeddedHaServices，
+				 * HighAvailabilityServicesUtils 是创建 HighAvailabilityServices 的工具类，在没有配置 HA 的情况下，会创建 EmbeddedHaServices。
+				 * EmbeddedHaServices 不具备高可用的特性，适用于 ResourceMangaer， TaksManager，JobManager 等所有组件都运行在同一个进程的情况。
+				 * EmbeddedHaService 为各组件创建的选举服务为 EmbeddedLeaderElectionService, 一旦有参与选举的 LeaderContender 加入，该 contender 就被选择为 leader。
+				 */
 				haServices = HighAvailabilityServicesUtils.createAvailableOrEmbeddedServices(
 					configuration,
 					commonRpcService.getExecutor());
 
-				blobServer = new BlobServer(configuration, haServices.createBlobStore());
+				blobServer = new BlobServer(configuration, haServices.createBlobStore());  //mini cluster 情况下不做任何事
 				blobServer.start();
 
 				heartbeatServices = HeartbeatServices.fromConfiguration(configuration);
 
 				// bring up the ResourceManager(s)
 				LOG.info("Starting ResourceManger");
+
+				/**
+				 * 在启动tm之前创建resourceManager，然后直接调用start启动，会看到参与选举的过程
+				 */
 				resourceManagerRunner = startResourceManager(
 					configuration,
 					haServices,
@@ -308,32 +334,47 @@ public class MiniCluster implements JobExecutorService, AutoCloseableAsync {
 
 				// bring up the TaskManager(s) for the mini cluster
 				LOG.info("Starting {} TaskManger(s)", numTaskManagers);
+
+				/**
+				 * 启动所有的tm，也即是启动TaskExecutor(实现了Endpoint和TaskExecutorGateway)，
+				 * 稍微具体点的过程：
+				 * TaskManagerRunner#startTaskManager 会创建一个 TaskExecutor, TaskExecutor 实现了 RpcEndpoint 接口。TaskExecutor创建完成之后，就直接调用了它的start方法，start方法中，
+				 * 会从 HighAvailabilityServices(EmbeddedHaServices) 中获取到 ResourceManagerLeaderRetriever，然后通过监听回调的方式，获取rm的地址，和rm建立链接，建立链接之后可以获取到rm的RpcGateway，
+				 * 然后通过rpc的方式，向rm注册自己(ResourceManager#registerTaskExecutor)，然后把当前tm的slotReport汇报给rm(ResourceManager#sendSlotReport)。
+				 */
 				taskManagers = startTaskManagers(
-					configuration,
-					haServices,
-					heartbeatServices,
+					configuration, //config
+					haServices,    // EmbeddedHaServices
+					heartbeatServices, //心跳
 					metricRegistry,
 					blobCacheService,
-					numTaskManagers,
-					taskManagerRpcServices);
+					numTaskManagers,  //tm 个数
+					taskManagerRpcServices);  //tm 的  RpcService
 
 				// starting the dispatcher rest endpoint
 				LOG.info("Starting dispatcher rest endpoint.");
 
-				dispatcherGatewayRetriever = new RpcGatewayRetriever<>(
+
+				dispatcherGatewayRetriever = new RpcGatewayRetriever<>(   //通过它的createGateway方法可以获取到 DispatcherGateway 的远程代理对象
 					jobManagerRpcService,
-					DispatcherGateway.class,
+					DispatcherGateway.class, //要获取 DispatcherGateway的远程代理对象
 					DispatcherId::fromUuid,
 					20,
 					Time.milliseconds(20L));
+
+				//通过它的createGateway方法可以获取到 ResourceManagerGateway 的远程代理对象
 				final RpcGatewayRetriever<ResourceManagerId, ResourceManagerGateway> resourceManagerGatewayRetriever = new RpcGatewayRetriever<>(
 					jobManagerRpcService,
-					ResourceManagerGateway.class,
+					ResourceManagerGateway.class, //要获取 ResourceManagerGateway 的远程代理对象
 					ResourceManagerId::fromUuid,
 					20,
 					Time.milliseconds(20L));
 
-				this.dispatcherRestEndpoint = new DispatcherRestEndpoint(
+				/**
+				 *  client与JobManager在以前(Version 1.4及以前）也是通过AKKA(实现的RPCService)通讯的，但Version1.5及以后版本的JobManager里引入DispatcherRestEndPoint (目的是使Client请求可以在穿过Firewall ？)，
+				 *  从此client端与JobManager提供的 DispatcherRestEndpoint 通讯。
+				 */
+				this.dispatcherRestEndpoint = new DispatcherRestEndpoint(  //rest方式接收并处理JobGraph；
 					RestServerEndpointConfiguration.fromConfiguration(configuration),
 					dispatcherGatewayRetriever,
 					configuration,
@@ -358,6 +399,9 @@ public class MiniCluster implements JobExecutorService, AutoCloseableAsync {
 
 				final HistoryServerArchivist historyServerArchivist = HistoryServerArchivist.createHistoryServerArchivist(configuration, dispatcherRestEndpoint);
 
+				/**
+				 * 创建 StandaloneDispatcher
+				 */
 				dispatcher = new StandaloneDispatcher(
 					jobManagerRpcService,
 					Dispatcher.DISPATCHER_NAME + UUID.randomUUID(),
@@ -374,13 +418,13 @@ public class MiniCluster implements JobExecutorService, AutoCloseableAsync {
 					dispatcherRestEndpoint.getRestBaseUrl(),
 					historyServerArchivist);
 
-				dispatcher.start();
+				dispatcher.start(); //直接启动，也会看到参与选举的过程；
 
-				resourceManagerLeaderRetriever = haServices.getResourceManagerLeaderRetriever();
-				dispatcherLeaderRetriever = haServices.getDispatcherLeaderRetriever();
+				resourceManagerLeaderRetriever = haServices.getResourceManagerLeaderRetriever();  //获取rm的leader检索的服务；
+				dispatcherLeaderRetriever = haServices.getDispatcherLeaderRetriever(); 			//获取dispatcher的leader检索的服务；
 
-				resourceManagerLeaderRetriever.start(resourceManagerGatewayRetriever);
-				dispatcherLeaderRetriever.start(dispatcherGatewayRetriever);
+				resourceManagerLeaderRetriever.start(resourceManagerGatewayRetriever); //向rm的leader检索服务注册resourceManagerGatewayRetriever这个监听器，使其可以通过createGateway获取到ResourceManagerGateway的远程代理对象
+				dispatcherLeaderRetriever.start(dispatcherGatewayRetriever);   //同理
 			}
 			catch (Exception e) {
 				// cleanup everything
@@ -600,6 +644,10 @@ public class MiniCluster implements JobExecutorService, AutoCloseableAsync {
 	 * @throws JobExecutionException Thrown if anything went amiss during initial job launch,
 	 *         or if the job terminally failed.
 	 */
+	/**
+	 * 阻塞的方式提交一个 job
+	 * 本地模式的入口方法
+	 */
 	@Override
 	public JobExecutionResult executeJobBlocking(JobGraph job) throws JobExecutionException, InterruptedException {
 		checkNotNull(job, "job is null");
@@ -628,11 +676,16 @@ public class MiniCluster implements JobExecutorService, AutoCloseableAsync {
 		}
 	}
 
-	// 核心方法
+	/**
+	 * 提交job的核心方法
+	 * @param jobGraph
+	 * @return
+	 */
 	public CompletableFuture<JobSubmissionResult> submitJob(JobGraph jobGraph) {
 		final DispatcherGateway dispatcherGateway;
 		try {
-			dispatcherGateway = getDispatcherGateway();
+			//通过 Dispatcher 的 gateway retriever 获取 DispatcherGateway
+			dispatcherGateway = getDispatcherGateway();  //远程代理对象；
 		} catch (LeaderRetrievalException | InterruptedException e) {
 			ExceptionUtils.checkInterrupted(e);
 			return FutureUtils.completedExceptionally(e);
@@ -646,12 +699,15 @@ public class MiniCluster implements JobExecutorService, AutoCloseableAsync {
 
 		final CompletableFuture<Void> jarUploadFuture = uploadAndSetJobFiles(blobServerAddressFuture, jobGraph);
 
+		//通过 RPC 调用向 Dispatcher 提交 JobGraph
 		final CompletableFuture<Acknowledge> acknowledgeCompletableFuture = jarUploadFuture.thenCompose(
 			//在这里执行了真正的submit操作
 			/**
 			 * 这里的 Dispatcher 是一个接收job，然后指派JobMaster去启动任务的类,
 			 * 我们可以看看它的 类结构，有两个实现。在本地环境下启动的是 MiniDispatcher ，
 			 * 在集群上提交任务时，集群 上启动的是 StandaloneDispatcher
+			 *
+			 * 提交之后 Dispatcher的后续的处理的过程可以看 Dispatcher类的submitJob方法；
 			 */
 			(Void ack) -> dispatcherGateway.submitJob(jobGraph, rpcTimeout));
 
@@ -671,6 +727,9 @@ public class MiniCluster implements JobExecutorService, AutoCloseableAsync {
 		return dispatcherGateway.requestJobResult(jobId, RpcUtils.INF_TIMEOUT);
 	}
 
+	/**
+	 * 获取disPatcherGateWay的远程代理对象
+	 */
 	private DispatcherGateway getDispatcherGateway() throws LeaderRetrievalException, InterruptedException {
 		synchronized (lock) {
 			checkState(running, "MiniCluster is not yet running.");
@@ -768,6 +827,7 @@ public class MiniCluster implements JobExecutorService, AutoCloseableAsync {
 		return resourceManagerRunner;
 	}
 
+	//启动 tm
 	protected TaskExecutor[] startTaskManagers(
 			Configuration configuration,
 			HighAvailabilityServices haServices,
@@ -777,11 +837,11 @@ public class MiniCluster implements JobExecutorService, AutoCloseableAsync {
 			int numTaskManagers,
 			RpcService[] taskManagerRpcServices) throws Exception {
 
-		final TaskExecutor[] taskExecutors = new TaskExecutor[numTaskManagers];
+		final TaskExecutor[] taskExecutors = new TaskExecutor[numTaskManagers];  //TaskExecutor是具体的tm需要代理的接口的实现，它实现了 RpcEndpoint 和 TaskExecutorGateway(定义服务接口方法)
 		final boolean localCommunication = numTaskManagers == 1;
 
 		for (int i = 0; i < numTaskManagers; i++) {
-			taskExecutors[i] = TaskManagerRunner.startTaskManager(
+			taskExecutors[i] = TaskManagerRunner.startTaskManager(    //创建具体的 TaskExecutor
 				configuration,
 				new ResourceID(UUID.randomUUID().toString()),
 				taskManagerRpcServices[i],
@@ -792,7 +852,7 @@ public class MiniCluster implements JobExecutorService, AutoCloseableAsync {
 				localCommunication,
 				new TerminatingFatalErrorHandler(i));
 
-			taskExecutors[i].start();
+			taskExecutors[i].start();  //life cycle  start方法；
 		}
 
 		return taskExecutors;

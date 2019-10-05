@@ -3,7 +3,10 @@ package org.apache.flink.test.SourceCodeRead;
 import org.apache.flink.api.common.functions.FlatMapFunction;
 import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.configuration.Configuration;
+import org.apache.flink.configuration.RestOptions;
 import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.environment.LocalStreamEnvironment;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.util.Collector;
 
@@ -66,8 +69,6 @@ import org.apache.flink.util.Collector;
  *
  * JobGraph 的关键在于将多个 StreamNode 优化为一个 JobVertex, 对应的 StreamEdge 则转化为 JobEdge, 并且 JobVertex 和 JobEdge 之间通过 IntermediateDataSet 形成一个生产者和消费者的连接关系。
  *
- *
- *
  */
 public class SocketTextStreamWordCount {
     public static void main(String[] args) throws Exception {
@@ -83,7 +84,12 @@ public class SocketTextStreamWordCount {
          * 这行代码会返回一个可用的执行环境。执行环境是整个flink程序执行的上下文，记录了相关配置（如并行度等），
          * 并提供了一系列方法，如读取输入流的方法，以及真正开始运行整个代码的 execute 方法等。
          */
-        final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        //final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+		//设置一个 restport
+		Configuration configuration = new Configuration();
+		configuration.setInteger(RestOptions.PORT, 9898);
+		final StreamExecutionEnvironment env = LocalStreamEnvironment.createLocalEnvironment(Runtime.getRuntime().availableProcessors(),configuration);
 
         // get input data
         DataStream<String> text = env.socketTextStream(hostName, port);

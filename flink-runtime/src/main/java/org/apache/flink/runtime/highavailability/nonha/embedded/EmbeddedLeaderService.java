@@ -40,7 +40,7 @@ import static org.apache.flink.util.Preconditions.checkState;
 
 /**
  * A simple leader election service, which selects a leader among contenders and notifies listeners.
- *
+ * 一个简单的leader选举服务，在候选者中选择一个leader，然后通知 listener
  * <p>An election service for contenders can be created via {@link #createLeaderElectionService()},
  * a listener service for leader observers can be created via {@link #createLeaderRetrievalService()}.
  */
@@ -333,7 +333,7 @@ public class EmbeddedLeaderService {
 
 	private class EmbeddedLeaderElectionService implements LeaderElectionService {
 
-		volatile LeaderContender contender;
+		volatile LeaderContender contender;   //leader 竞选者
 
 		volatile boolean isLeader;
 

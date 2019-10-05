@@ -345,6 +345,9 @@ public class YarnResourceManager extends ResourceManager<YarnWorkerNode> impleme
 		);
 	}
 
+	/**
+	 * 分配container的回调函数，
+	 */
 	@Override
 	public void onContainersAllocated(List<Container> containers) {
 		runAsync(() -> {
@@ -369,6 +372,7 @@ public class YarnResourceManager extends ResourceManager<YarnWorkerNode> impleme
 							containerIdStr,
 							container.getNodeId().getHost());
 
+						//启动 TaskManager
 						nodeManagerClient.startContainer(container, taskExecutorLaunchContext);
 					} catch (Throwable t) {
 						log.error("Could not start TaskManager in container {}.", container.getId(), t);
@@ -458,6 +462,9 @@ public class YarnResourceManager extends ResourceManager<YarnWorkerNode> impleme
 			numPendingContainerRequests);
 	}
 
+	/**
+	 * 创建 TaskManager 的启动上下文
+	 */
 	private ContainerLaunchContext createTaskExecutorLaunchContext(Resource resource, String containerId, String host)
 			throws Exception {
 		// init the ContainerLaunchContext
@@ -484,7 +491,7 @@ public class YarnResourceManager extends ResourceManager<YarnWorkerNode> impleme
 			taskManagerParameters,
 			taskManagerConfig,
 			currDir,
-			YarnTaskExecutorRunner.class,
+			YarnTaskExecutorRunner.class, //入口类
 			log);
 
 		// set a special environment variable to uniquely identify this container

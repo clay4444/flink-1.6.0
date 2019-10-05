@@ -42,18 +42,22 @@ import java.util.concurrent.Executor;
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /**
- * Utils class to instantiate {@link HighAvailabilityServices} implementations.
+ * 创建 HighAvailabilityServices 的具体实现的工具类，
+ * 可以理解为一个创建 HighAvailabilityServices 具体实现（EmbeddedHaServices、ZooKeeperHaServices）的工厂
  */
 public class HighAvailabilityServicesUtils {
 
+	/**
+	 * 根据配置，创建具体 HighAvailabilityServices 的实现
+	 */
 	public static HighAvailabilityServices createAvailableOrEmbeddedServices(
 		Configuration config,
 		Executor executor) throws Exception {
-		HighAvailabilityMode highAvailabilityMode = LeaderRetrievalUtils.getRecoveryMode(config);
+		HighAvailabilityMode highAvailabilityMode = LeaderRetrievalUtils.getRecoveryMode(config);   // None or zookeeper，从配置中获取，mini cluster 取的是none
 
 		switch (highAvailabilityMode) {
 			case NONE:
-				return new EmbeddedHaServices(executor);
+				return new EmbeddedHaServices(executor);  //如果为None，则创建一个EmbeddedHaServices，
 
 			case ZOOKEEPER:
 				BlobStoreService blobStoreService = BlobUtils.createBlobStoreFromConfig(config);

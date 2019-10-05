@@ -96,7 +96,7 @@ public class LocalStreamEnvironment extends StreamExecutionEnvironment {
 
 		Configuration configuration = new Configuration();
 		configuration.addAll(jobGraph.getJobConfiguration());
-		configuration.setString(TaskManagerOptions.MANAGED_MEMORY_SIZE, "0");
+		configuration.setString(TaskManagerOptions.MANAGED_MEMORY_SIZE, "0"); //taskmanager.memory.size=0
 
 		// add (and override) the settings with what the user defined
 		configuration.addAll(this.configuration);
@@ -105,18 +105,19 @@ public class LocalStreamEnvironment extends StreamExecutionEnvironment {
 			configuration.setInteger(RestOptions.PORT, 0);
 		}
 
+		//每个taskManager启几个slot，取最大并行度，也就是默认只启一个tm ？  yes
 		int numSlotsPerTaskManager = configuration.getInteger(TaskManagerOptions.NUM_TASK_SLOTS, jobGraph.getMaximumParallelism());
 
-		MiniClusterConfiguration cfg = new MiniClusterConfiguration.Builder()
+		MiniClusterConfiguration cfg = new MiniClusterConfiguration.Builder()  //封装了一下configuration，使其不可变
 			.setConfiguration(configuration)
 			.setNumSlotsPerTaskManager(numSlotsPerTaskManager)
-			.build();
+			.build(); 			//build的过程中可以看到，默认就启一个 tm，使用一个共享的rpc服务
 
 		if (LOG.isInfoEnabled()) {
 			LOG.info("Running job on local embedded Flink mini cluster");
 		}
 
-		MiniCluster miniCluster = new MiniCluster(cfg);
+		MiniCluster miniCluster = new MiniCluster(cfg); //创建 miniCluster
 
 		try {
 			//启动集群，包括启动JobMaster，进行leader选举等等

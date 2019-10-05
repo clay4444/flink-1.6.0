@@ -43,6 +43,11 @@ import java.util.UUID;
  *     <li>Naming of RPC endpoints</li>
  * </ul>
  */
+
+/**
+ * 目前看过源码的：
+ * EmbeddedHaServices
+ */
 public interface HighAvailabilityServices extends AutoCloseable {
 
 	// ------------------------------------------------------------------------

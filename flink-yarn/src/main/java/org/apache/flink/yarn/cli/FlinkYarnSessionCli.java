@@ -90,6 +90,8 @@ import static org.apache.flink.configuration.HighAvailabilityOptions.HA_CLUSTER_
 
 /**
  * Class handling the command line interface to the YARN session.
+ *
+ * 启动Yarn Cluster的入口
  */
 public class FlinkYarnSessionCli extends AbstractCustomCommandLine<ApplicationId> {
 	private static final Logger LOG = LoggerFactory.getLogger(FlinkYarnSessionCli.class);
@@ -172,6 +174,7 @@ public class FlinkYarnSessionCli extends AbstractCustomCommandLine<ApplicationId
 		this(configuration, configurationDirectory, shortPrefix, longPrefix, true);
 	}
 
+	//真正的构造器，主要是做一些解析命令行参数，然后赋值的工作；
 	public FlinkYarnSessionCli(
 			Configuration configuration,
 			String configurationDirectory,
@@ -262,7 +265,7 @@ public class FlinkYarnSessionCli extends AbstractCustomCommandLine<ApplicationId
 			yarnApplicationIdFromYarnProperties = null;
 		}
 
-		this.yarnConfiguration = new YarnConfiguration();
+		this.yarnConfiguration = new YarnConfiguration();  // yarnConfiguration 直接new个空的 YarnConfiguration 吗？
 	}
 
 	private AbstractYarnClusterDescriptor createDescriptor(
@@ -575,6 +578,9 @@ public class FlinkYarnSessionCli extends AbstractCustomCommandLine<ApplicationId
 		return effectiveConfiguration;
 	}
 
+	/**
+	 * run 方法
+	 */
 	public int run(String[] args) throws CliArgsException, FlinkException {
 		//
 		//	Command Line Options
@@ -586,7 +592,7 @@ public class FlinkYarnSessionCli extends AbstractCustomCommandLine<ApplicationId
 			return 0;
 		}
 
-		final AbstractYarnClusterDescriptor yarnClusterDescriptor = createClusterDescriptor(cmd);
+		final AbstractYarnClusterDescriptor yarnClusterDescriptor = createClusterDescriptor(cmd); // 创建YarnClusterDescriptor
 
 		try {
 			// Query cluster for metrics
@@ -605,7 +611,7 @@ public class FlinkYarnSessionCli extends AbstractCustomCommandLine<ApplicationId
 				} else {
 					final ClusterSpecification clusterSpecification = getClusterSpecification(cmd);
 
-					clusterClient = yarnClusterDescriptor.deploySessionCluster(clusterSpecification);
+					clusterClient = yarnClusterDescriptor.deploySessionCluster(clusterSpecification);  	//在这里，触发集群的部署。
 
 					//------------------ ClusterClient deployed, handle connection details
 					yarnApplicationId = clusterClient.getClusterId();
@@ -792,6 +798,10 @@ public class FlinkYarnSessionCli extends AbstractCustomCommandLine<ApplicationId
 		}
 	}
 
+	/**
+	 * 入口
+	 * 首先根据命令行参数创建 YarnClusterDescriptor，接着调用 YarnClusterDescriptor#deploySessionCluster 触发集群的部署。
+	 */
 	public static void main(final String[] args) {
 		final String configurationDirectory = CliFrontend.getConfigurationDirectoryFromEnv();
 
@@ -808,7 +818,7 @@ public class FlinkYarnSessionCli extends AbstractCustomCommandLine<ApplicationId
 
 			SecurityUtils.install(new SecurityConfiguration(flinkConfiguration));
 
-			retCode = SecurityUtils.getInstalledContext().runSecured(() -> cli.run(args));
+			retCode = SecurityUtils.getInstalledContext().runSecured(() -> cli.run(args)); //在这
 		} catch (CliArgsException e) {
 			retCode = handleCliArgsException(e);
 		} catch (Exception e) {

@@ -228,9 +228,36 @@ public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId> impleme
 	}
 
 	//------------------------------------------------------
-	// RPCs
+	// RPCs  rpc 方法
 	//------------------------------------------------------
 
+	/**
+	 * 这里可以理解为用户job开始执行的入口方法：
+	 *
+	 * 接收到客户端提交的job，开始处理，
+	 * 会将提交的 JobGraph 保存在 SubmittedJobGraphStore 中（用于故障恢复），并为提交的 JobGraph 创建并启动 JobManager：(JobManagerRunner)
+	 *
+	 * 关于JobManager需要注意的地方：
+	 * JobManager是一个统称，主要是由四大服务组成的，
+	 *  1.DispatcherRestEndpoint  主要是以rest方式接收用户的job
+	 *  2.Dispatcher   		可以理解为DispatcherRestEndpoint的后端服务，submitJob rpc调用就是在这里的；
+	 *  3.jobMaster   	    jobMaster是真正将jobGraph->ExecutionGraph；向rm申请资源；schedule task(subtask)到对应的slot；定时触发checkpoint；
+	 *  				##其实JobManagerRunner的主要作用就是启动一个jobMaster，所以其实应该叫JobMasterRunner，这里主要是历史遗留问题；
+	 *  4.ResourceManager		  主要负责资源管理
+	 *
+	 * JobManagerRunner的主要作用就是启动一个jobMaster，ExecutionGraph最终的调度执行都是通过JobMaster来做的；
+	 *
+	 * JobManagerRunner创建之后，就会直接调用start方法启动，然后去竞选leader，竞选成功之后，触发回调方法，就会启动 JobMaster，
+	 * 然后调用 JobMaster 的start方法，会先建立和rm的连接，最终调用到 JobMaster#scheduleExecutionGraph，开始调度执行ExecutionGraph，
+	 *
+	 * 顺便多说一句，JobManagerRunner在创建的时候，在构造器里，就直接把JobMaster也创建出来；在创建JobMaster的时候，又会直接调用 ExecutionGraphBuilder#buildGraph 来构建ExecutionGraph；
+	 * 此时ExecutionGraph也创建完成了，
+	 * 所以后续 JobMaster#start 的时候，ExecutionGraph已经生成好了；
+	 *
+	 * 问题：这就直接调度执行了，那 ExecutionGraph 是什么时候生成的来？ 看上面
+	 *
+	 * @return
+	 */
 	@Override
 	public CompletableFuture<Acknowledge> submitJob(JobGraph jobGraph, Time timeout) {
 		final JobID jobId = jobGraph.getJobID();
@@ -248,7 +275,7 @@ public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId> impleme
 			return FutureUtils.completedExceptionally(
 				new JobSubmissionException(jobId, String.format("Job has already been submitted and is in state %s.", jobSchedulingStatus)));
 		} else {
-			final CompletableFuture<Acknowledge> persistAndRunFuture = waitForTerminatingJobManager(jobId, jobGraph, this::persistAndRunJob)
+			final CompletableFuture<Acknowledge> persistAndRunFuture = waitForTerminatingJobManager(jobId, jobGraph, this::persistAndRunJob) // 在这 persistAndRunJob
 				.thenApply(ignored -> Acknowledge.get());
 
 			return persistAndRunFuture.exceptionally(
@@ -259,11 +286,13 @@ public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId> impleme
 		}
 	}
 
+	//将提交的 JobGraph 保存在 SubmittedJobGraphStore 中（用于故障恢复）
 	private void persistAndRunJob(JobGraph jobGraph) throws Exception {
-		submittedJobGraphStore.putJobGraph(new SubmittedJobGraph(jobGraph, null));
+
+		submittedJobGraphStore.putJobGraph(new SubmittedJobGraph(jobGraph, null));  //用于故障恢复
 
 		try {
-			runJob(jobGraph);
+			runJob(jobGraph);  //runJob
 		} catch (Exception e) {
 			try {
 				submittedJobGraphStore.removeJobGraph(jobGraph.getJobID());
@@ -275,19 +304,25 @@ public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId> impleme
 		}
 	}
 
+	/**
+	 * run方法，创建一个JobManagerRunner，JobManagerRunner的主要作用就是启动一个jobMaster，ExecutionGraph最终的调度执行都是通过JobMaster来做的；
+	 */
 	private void runJob(JobGraph jobGraph) throws Exception {
 		Preconditions.checkState(!jobManagerRunners.containsKey(jobGraph.getJobID()));
 
-		final JobManagerRunner jobManagerRunner = createJobManagerRunner(jobGraph);
+		final JobManagerRunner jobManagerRunner = createJobManagerRunner(jobGraph);  //为client提交的job，创建JobManager
 
-		jobManagerRunner.start();
+		//创建后直接start启动；开始竞选leader，一旦竞选成功就会启动一个 JobMaster。
+		jobManagerRunner.start();  //jobManagerRunner也要竞选leader吗？？？？ 还是说JobMaster？ 可能是因为jobManager是一个统称，一挂肯定都挂了；
 
-		jobManagerRunners.put(jobGraph.getJobID(), jobManagerRunner);
+		jobManagerRunners.put(jobGraph.getJobID(), jobManagerRunner);  //记录一下？  每个job 对应的 jobManager
 	}
 
+	//为client提交的job创建 JobManager
 	private JobManagerRunner createJobManagerRunner(JobGraph jobGraph) throws Exception {
 		final JobID jobId = jobGraph.getJobID();
 
+		//最终返回一个JobManagerRunner，JobManagerRunner的主要作用就是启动一个jobMaster，ExecutionGraph最终的调度执行都是通过JobMaster来做的；
 		final JobManagerRunner jobManagerRunner = jobManagerRunnerFactory.createJobManagerRunner(
 			ResourceID.generate(),
 			jobGraph,
@@ -933,7 +968,7 @@ public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId> impleme
 				JobManagerSharedServices jobManagerServices,
 				JobManagerJobMetricGroupFactory jobManagerJobMetricGroupFactory,
 				FatalErrorHandler fatalErrorHandler) throws Exception {
-			return new JobManagerRunner(
+			return new JobManagerRunner(  //最终返回JobManagerRunner，JobManagerRunner的主要作用就是启动一个jobMaster，ExecutionGraph最终的调度执行都是通过JobMaster来做的；
 				resourceId,
 				jobGraph,
 				configuration,

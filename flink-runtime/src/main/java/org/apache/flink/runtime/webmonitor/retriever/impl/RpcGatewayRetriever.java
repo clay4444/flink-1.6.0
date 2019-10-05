@@ -37,6 +37,11 @@ import java.util.function.Function;
  * @param <F> type of the fencing token
  * @param <T> type of the fenced gateway to retrieve
  */
+
+/**
+ * extends LeaderGatewayRetriever  RpcGatewayRetriever 是 LeaderGatewayRetriver 的具体实现
+ * 根据 Leader 的地址通过 RpcService.connect() 方法获得对应 Leader 的 RpcGateway。
+ */
 public class RpcGatewayRetriever<F extends Serializable, T extends FencedRpcGateway<F>> extends LeaderGatewayRetriever<T> {
 
 	private final RpcService rpcService;

@@ -49,6 +49,10 @@ import java.util.concurrent.CompletableFuture;
 /**
  * The {@link ResourceManager}'s RPC gateway interface.
  */
+
+/**
+ * ResourceManager 提供的代理接口
+ */
 public interface ResourceManagerGateway extends FencedRpcGateway<ResourceManagerId> {
 
 	/**
@@ -69,6 +73,7 @@ public interface ResourceManagerGateway extends FencedRpcGateway<ResourceManager
 		@RpcTimeout Time timeout);
 
 	/**
+	 * 请求slot
 	 * Requests a slot from the resource manager.
 	 *
 	 * @param jobMasterId id of the JobMaster
@@ -88,6 +93,8 @@ public interface ResourceManagerGateway extends FencedRpcGateway<ResourceManager
 	void cancelSlotRequest(AllocationID allocationID);
 
 	/**
+	 * 注册TaskExecutor(tm)
+	 *
 	 * Register a {@link TaskExecutor} at the resource manager.
 	 *
 	 * @param taskExecutorAddress The address of the TaskExecutor that registers
@@ -106,6 +113,7 @@ public interface ResourceManagerGateway extends FencedRpcGateway<ResourceManager
 		@RpcTimeout Time timeout);
 
 	/**
+	 * tm报告给rm slot情况；
 	 * Sends the given {@link SlotReport} to the ResourceManager.
 	 *
 	 * @param taskManagerRegistrationId id identifying the sending TaskManager

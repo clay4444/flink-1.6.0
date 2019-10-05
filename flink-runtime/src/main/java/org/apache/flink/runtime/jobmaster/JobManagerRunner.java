@@ -71,7 +71,7 @@ public class JobManagerRunner implements LeaderContender, OnCompletionActions, A
 	private final Object lock = new Object();
 
 	/** The job graph needs to run. */
-	private final JobGraph jobGraph;
+	private final JobGraph jobGraph;   //用户作业  JobGraph
 
 	/** Used to check whether a job needs to be run. */
 	private final RunningJobsRegistry runningJobsRegistry;
@@ -202,6 +202,7 @@ public class JobManagerRunner implements LeaderContender, OnCompletionActions, A
 	// Lifecycle management
 	//----------------------------------------------------------------------------------------------
 
+	//启动之后直接参与选举，竞选成功之后，触发 grantLeadership 方法进行回调；
 	public void start() throws Exception {
 		try {
 			leaderElectionService.start(this);
@@ -308,6 +309,7 @@ public class JobManagerRunner implements LeaderContender, OnCompletionActions, A
 	// Leadership methods
 	//----------------------------------------------------------------------------------------------
 
+	//被选举为 leader
 	@Override
 	public void grantLeadership(final UUID leaderSessionID) {
 		synchronized (lock) {
@@ -324,6 +326,7 @@ public class JobManagerRunner implements LeaderContender, OnCompletionActions, A
 		}
 	}
 
+	//启动jobMaster；
 	private void verifyJobSchedulingStatusAndStartJobManager(UUID leaderSessionId) throws Exception {
 		final JobSchedulingStatus jobSchedulingStatus = runningJobsRegistry.getJobSchedulingStatus(jobGraph.getJobID());
 
@@ -336,6 +339,7 @@ public class JobManagerRunner implements LeaderContender, OnCompletionActions, A
 
 			runningJobsRegistry.setJobRunning(jobGraph.getJobID());
 
+			//使用特定的 JobMasterId 启动 JobMaster
 			final CompletableFuture<Acknowledge> startFuture = jobMaster.start(new JobMasterId(leaderSessionId), rpcTimeout);
 			final CompletableFuture<JobMasterGateway> currentLeaderGatewayFuture = leaderGatewayFuture;
 
