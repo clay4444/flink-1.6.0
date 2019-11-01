@@ -226,7 +226,7 @@ public class MiniCluster implements JobExecutorService, AutoCloseableAsync {
 	 *  1. 创建RpcService，RpcService是RpcEndPoint的运行时环境，RpcEndPoint创建的时候就是通过 RpcService 来启动，并返回代理对象的；主要有三个，jobmanager，resourcemanager，taskmanager
 	 *  2. 创建 HighAvailabilityServices，它提供了获取 HA 相关所有服务的方法，包括：ResourceManager 选举服务及 Leader 获取 、Dispatcher 选举服务及 Leader 获取、任务状态的注册表、checkpoint recovery、blob store 等相关的服务
 	 * minicluster环境下，返回的是EmbeddedHaServices；细节看代码处的注释
-	 *  3. 启动ResourceManager，然后直接start启动，可以看到选举的过程；
+	 *  3. 启动ResourceManager，然后直接start启动，可以看到选举的过程 和 启动rpc的过程；
 	 *  4. 启动tm，具体是创建了 TaskExecutor，然后start启动，可以看到和rm通信，并rpc汇报当前slot的过程；细节跟代码看注释
 	 *  5. 启动DispatcherRestEndpoint
 	 *  6. 启动Dispatcher(具体是StandaloneDispatcher)，然后start启动，也看到参与选举的过程；
@@ -318,7 +318,7 @@ public class MiniCluster implements JobExecutorService, AutoCloseableAsync {
 				LOG.info("Starting ResourceManger");
 
 				/**
-				 * 在启动tm之前创建resourceManager，然后直接调用start启动，会看到参与选举的过程
+				 * 在启动tm之前创建resourceManager，然后直接调用start启动，会看到参与选举的过程 和 启动rpc的过程；
 				 */
 				resourceManagerRunner = startResourceManager(
 					configuration,

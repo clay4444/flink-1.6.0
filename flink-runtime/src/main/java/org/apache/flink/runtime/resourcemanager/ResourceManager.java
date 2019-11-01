@@ -195,20 +195,22 @@ public abstract class ResourceManager<WorkerType extends ResourceIDRetrievable>
 
 
 	// ------------------------------------------------------------------------
-	//  RPC lifecycle methods
+	//  RPC lifecycle methods     生命周期
 	// ------------------------------------------------------------------------
 
+	//1.启动rpc服务；
+	//2.参与leader选举；
 	@Override
 	public void start() throws Exception {
 		// start a leader
-		super.start();
+		super.start();  // rpc相关，RpcEndpoint的start, rpcServer.start(); rpcServer是代理对象，给Akka发消息
 
 		leaderElectionService = highAvailabilityServices.getResourceManagerLeaderElectionService();
 
 		initialize();
 
 		try {
-			leaderElectionService.start(this);  //参与选举
+			leaderElectionService.start(this);  //参与选举，然后被回调 grantLeadership 方法，成为leader
 		} catch (Exception e) {
 			throw new ResourceManagerException("Could not start the leader election service.", e);
 		}

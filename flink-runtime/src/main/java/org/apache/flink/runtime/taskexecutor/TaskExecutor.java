@@ -885,8 +885,8 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 	// ------------------------------------------------------------------------
 
 	private void notifyOfNewResourceManagerLeader(String newLeaderAddress, ResourceManagerId newResourceManagerId) {
-		resourceManagerAddress = createResourceManagerAddress(newLeaderAddress, newResourceManagerId);
-		reconnectToResourceManager(new FlinkException(String.format("ResourceManager leader changed to new address %s", resourceManagerAddress)));
+		resourceManagerAddress = createResourceManagerAddress(newLeaderAddress, newResourceManagerId); 		//创建一个新的rm地址；
+		reconnectToResourceManager(new FlinkException(String.format("ResourceManager leader changed to new address %s", resourceManagerAddress)));  //重新连接新的rm
 	}
 
 	@Nullable
@@ -899,9 +899,9 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 		}
 	}
 
-	private void reconnectToResourceManager(Exception cause) {
-		closeResourceManagerConnection(cause);
-		tryConnectToResourceManager();
+	private void reconnectToResourceManager(Exception cause) {  //重新连接新的rm
+		closeResourceManagerConnection(cause); 		//先关闭原来的连接
+		tryConnectToResourceManager();     //然后连接新的
 	}
 
 	private void tryConnectToResourceManager() {
@@ -910,7 +910,7 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 		}
 	}
 
-	private void connectToResourceManager() {
+	private void connectToResourceManager() {   //然后连接新的rm
 		assert(resourceManagerAddress != null);
 		assert(establishedResourceManagerConnection == null);
 		assert(resourceManagerConnection == null);
@@ -1491,7 +1491,7 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 		public void notifyLeaderAddress(final String leaderAddress, final UUID leaderSessionID) {
 			//获得 ResourceManager 的地址， 和 ResourceManager 建立连接
 			runAsync(
-				() -> notifyOfNewResourceManagerLeader(
+				() -> notifyOfNewResourceManagerLeader( // 点进去看这里
 					leaderAddress,
 					ResourceManagerId.fromUuidOrNull(leaderSessionID)));
 		}

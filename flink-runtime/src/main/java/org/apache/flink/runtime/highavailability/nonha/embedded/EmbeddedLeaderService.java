@@ -43,6 +43,14 @@ import static org.apache.flink.util.Preconditions.checkState;
  * 一个简单的leader选举服务，在候选者中选择一个leader，然后通知 listener
  * <p>An election service for contenders can be created via {@link #createLeaderElectionService()},
  * a listener service for leader observers can be created via {@link #createLeaderRetrievalService()}.
+ *
+ * 这个是一个顶级父类，有两个内部类，EmbeddedLeaderElectionService(用于leader选举)  和  EmbeddedLeaderRetrievalService(用于leader检索)
+ * 这个类的主要作用就是实现了 leader检索 和 leader选举，
+ *
+ * 实现的原理也比较简答，适用于 ResourceMangaer， TaksManager，JobManager 等所有组件都运行在同一个进程的情况。也就是永远只有一个leader
+ * 1.首先，ResourceMangaer，dispatcher 等组件启动，会各自创建一个自己的 EmbeddedLeaderService，进行自己的leader选举和leader检索服务；
+ * 2.启动时，通过各自的 EmbeddedLeaderService 获取各自的leader选举服务，传入候选者，然后自动成为leader（通过回调）
+ * 3.当jm需要获取rm / jm 的leader地址时，只需要获取对应的 rm / jm 的 EmbeddedLeaderService 的leader检索服务，然后注入一个监听器，然后被对应组件的EmbeddedLeaderService回调listener方法，拿到leader地址
  */
 public class EmbeddedLeaderService {
 
@@ -52,15 +60,15 @@ public class EmbeddedLeaderService {
 
 	private final Executor notificationExecutor;
 
-	private final Set<EmbeddedLeaderElectionService> allLeaderContenders;
+	private final Set<EmbeddedLeaderElectionService> allLeaderContenders;  //所有 参与竞选的候选者
 
-	private final Set<EmbeddedLeaderRetrievalService> listeners;
+	private final Set<EmbeddedLeaderRetrievalService> listeners;		//所有 监听者
 
 	/** proposed leader, which has been notified of leadership grant, but has not confirmed. */
-	private EmbeddedLeaderElectionService currentLeaderProposed;
+	private EmbeddedLeaderElectionService currentLeaderProposed;     //提议人
 
 	/** actual leader that has confirmed leadership and of which listeners have been notified. */
-	private EmbeddedLeaderElectionService currentLeaderConfirmed;
+	private EmbeddedLeaderElectionService currentLeaderConfirmed;   //确定人
 
 	/** fencing UID for the current leader (or proposed leader). */
 	private volatile UUID currentLeaderSessionId;
@@ -132,7 +140,7 @@ public class EmbeddedLeaderService {
 	}
 
 	// ------------------------------------------------------------------------
-	//  creating contenders and listeners
+	//  创建 leader检索服务   和   leader选举服务
 	// ------------------------------------------------------------------------
 
 	public LeaderElectionService createLeaderElectionService() {
@@ -151,6 +159,7 @@ public class EmbeddedLeaderService {
 
 	/**
 	 * Callback from leader contenders when they start their service.
+	 * 新增一个候选者，
 	 */
 	void addContender(EmbeddedLeaderElectionService service, LeaderContender contender) {
 		synchronized (lock) {
@@ -158,14 +167,14 @@ public class EmbeddedLeaderService {
 			checkState(!service.running, "leader election service is already started");
 
 			try {
-				if (!allLeaderContenders.add(service)) {
+				if (!allLeaderContenders.add(service)) {  	//加到所有候选者中； 不允许重复加入 （为什么要加入这个Service而不加contender呢？）
 					throw new IllegalStateException("leader election service was added to this service multiple times");
 				}
 
 				service.contender = contender;
 				service.running = true;
 
-				updateLeader();
+				updateLeader();  //更新一下当前leader，回调，触发leader授权回调；
 			}
 			catch (Throwable t) {
 				fatalError(t);
@@ -249,6 +258,7 @@ public class EmbeddedLeaderService {
 		}
 	}
 
+	//更新当前leader，需要回调leader 的 GrantLeadership() 方法进行授权操作；
 	@GuardedBy("lock")
 	private void updateLeader() {
 		// this must be called under the lock
@@ -256,7 +266,7 @@ public class EmbeddedLeaderService {
 
 		if (currentLeaderConfirmed == null && currentLeaderProposed == null) {
 			// we need a new leader
-			if (allLeaderContenders.isEmpty()) {
+			if (allLeaderContenders.isEmpty()) {   //没有leader
 				// no new leader available, tell everyone that there is no leader currently
 				for (EmbeddedLeaderRetrievalService listener : listeners) {
 					notificationExecutor.execute(
@@ -264,9 +274,9 @@ public class EmbeddedLeaderService {
 				}
 			}
 			else {
-				// propose a leader and ask it
+				// propose a leader and ask it     但是这里好像没有触发 对listener的回调？ 这是个bug吗？
 				final UUID leaderSessionId = UUID.randomUUID();
-				EmbeddedLeaderElectionService leaderService = allLeaderContenders.iterator().next();
+				EmbeddedLeaderElectionService leaderService = allLeaderContenders.iterator().next(); //直接从所有候选者中选一个，授予其leader权限；
 
 				currentLeaderSessionId = leaderSessionId;
 				currentLeaderProposed = leaderService;
@@ -280,6 +290,8 @@ public class EmbeddedLeaderService {
 		}
 	}
 
+	//增加监听者； 在这里如果已经有leader了，就触发listener的回调，也就是说，必须先选举出leader，然后注册listener，才能成功触发回调，
+	//因为选举出leader之后，没有触发listener的回调的操作，这好像是个bug？！
 	void addListener(EmbeddedLeaderRetrievalService service, LeaderRetrievalListener listener) {
 		synchronized (lock) {
 			checkState(!shutdown, "leader election service is shut down");
@@ -342,7 +354,7 @@ public class EmbeddedLeaderService {
 		@Override
 		public void start(LeaderContender contender) throws Exception {
 			checkNotNull(contender);
-			addContender(this, contender);
+			addContender(this, contender); //新增一个候选人，然后updateLeader()回调触发leader的授权；但是对leader授完权却没有回调listener，？
 		}
 
 		@Override
@@ -400,6 +412,7 @@ public class EmbeddedLeaderService {
 
 	// ------------------------------------------------------------------------
 	//  asynchronous notifications
+	//  异步通知
 	// ------------------------------------------------------------------------
 
 	private static class NotifyOfLeaderCall implements Runnable {
@@ -427,7 +440,7 @@ public class EmbeddedLeaderService {
 		@Override
 		public void run() {
 			try {
-				listener.notifyLeaderAddress(address, leaderSessionId);
+				listener.notifyLeaderAddress(address, leaderSessionId);  //回调listener的方法，通知它新leader地址；
 			}
 			catch (Throwable t) {
 				logger.warn("Error notifying leader listener about new leader", t);
@@ -461,7 +474,7 @@ public class EmbeddedLeaderService {
 			final LeaderContender contender = leaderElectionService.contender;
 
 			try {
-				contender.grantLeadership(leaderSessionId);
+				contender.grantLeadership(leaderSessionId); //给候选者授权，让其成为leader
 			}
 			catch (Throwable t) {
 				logger.warn("Error granting leadership to contender", t);
