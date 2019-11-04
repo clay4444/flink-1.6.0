@@ -293,7 +293,7 @@ public class JobMaster extends FencedRpcEndpoint<JobMasterId> implements JobMast
 		this.lastInternalSavepoint = null;
 
 		this.jobManagerJobMetricGroup = jobMetricGroupFactory.create(jobGraph);
-		this.executionGraph = createAndRestoreExecutionGraph(jobManagerJobMetricGroup);
+		this.executionGraph = createAndRestoreExecutionGraph(jobManagerJobMetricGroup);  //也就是说在创建Master的时候，就直接调用 ExecutionGraphBuilder.buildGraph 创建好了 ExecutionGraph
 		this.jobStatusListener = null;
 
 		this.resourceManagerConnection = null;

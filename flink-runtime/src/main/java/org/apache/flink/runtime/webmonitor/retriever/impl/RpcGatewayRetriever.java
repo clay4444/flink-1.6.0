@@ -67,6 +67,7 @@ public class RpcGatewayRetriever<F extends Serializable, T extends FencedRpcGate
 		this.retryDelay = Preconditions.checkNotNull(retryDelay);
 	}
 
+	//模板方法设计模式，在父类 LeaderGatewayRetriever 中被回调；
 	@Override
 	protected CompletableFuture<T> createGateway(CompletableFuture<Tuple2<String, UUID>> leaderFuture) {
 		return FutureUtils.retryWithDelay(

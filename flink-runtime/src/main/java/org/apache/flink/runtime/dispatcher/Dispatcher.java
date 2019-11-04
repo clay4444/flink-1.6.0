@@ -242,7 +242,7 @@ public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId> impleme
 	 *  1.DispatcherRestEndpoint  主要是以rest方式接收用户的job
 	 *  2.Dispatcher   		可以理解为DispatcherRestEndpoint的后端服务，submitJob rpc调用就是在这里的；
 	 *  3.jobMaster   	    jobMaster是真正将jobGraph->ExecutionGraph；向rm申请资源；schedule task(subtask)到对应的slot；定时触发checkpoint；
-	 *  				##其实JobManagerRunner的主要作用就是启动一个jobMaster，所以其实应该叫JobMasterRunner，这里主要是历史遗留问题；
+	 *  				## 其实JobManagerRunner的主要作用就是启动一个jobMaster，所以其实应该叫JobMasterRunner，这里主要是历史遗留问题；
 	 *  4.ResourceManager		  主要负责资源管理
 	 *
 	 * JobManagerRunner的主要作用就是启动一个jobMaster，ExecutionGraph最终的调度执行都是通过JobMaster来做的；

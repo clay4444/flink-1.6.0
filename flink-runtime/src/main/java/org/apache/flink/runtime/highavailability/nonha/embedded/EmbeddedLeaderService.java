@@ -50,7 +50,7 @@ import static org.apache.flink.util.Preconditions.checkState;
  * 实现的原理也比较简答，适用于 ResourceMangaer， TaksManager，JobManager 等所有组件都运行在同一个进程的情况。也就是永远只有一个leader
  * 1.首先，ResourceMangaer，dispatcher 等组件启动，会各自创建一个自己的 EmbeddedLeaderService，进行自己的leader选举和leader检索服务；
  * 2.启动时，通过各自的 EmbeddedLeaderService 获取各自的leader选举服务，传入候选者，然后自动成为leader（通过回调）
- * 3.当jm需要获取rm / jm 的leader地址时，只需要获取对应的 rm / jm 的 EmbeddedLeaderService 的leader检索服务，然后注入一个监听器，然后被对应组件的EmbeddedLeaderService回调listener方法，拿到leader地址
+ * 3.当tm需要获取rm / jm 的leader地址时，只需要获取对应的 rm / jm 的 EmbeddedLeaderService 的leader检索服务，然后注入一个监听器，然后被对应组件的EmbeddedLeaderService回调listener方法，拿到leader地址
  */
 public class EmbeddedLeaderService {
 

@@ -685,7 +685,7 @@ public class MiniCluster implements JobExecutorService, AutoCloseableAsync {
 		final DispatcherGateway dispatcherGateway;
 		try {
 			//通过 Dispatcher 的 gateway retriever 获取 DispatcherGateway
-			dispatcherGateway = getDispatcherGateway();  //远程代理对象；
+			dispatcherGateway = getDispatcherGateway();  //远程代理对象； dispatcher
 		} catch (LeaderRetrievalException | InterruptedException e) {
 			ExceptionUtils.checkInterrupted(e);
 			return FutureUtils.completedExceptionally(e);
@@ -705,7 +705,7 @@ public class MiniCluster implements JobExecutorService, AutoCloseableAsync {
 			/**
 			 * 这里的 Dispatcher 是一个接收job，然后指派JobMaster去启动任务的类,
 			 * 我们可以看看它的 类结构，有两个实现。在本地环境下启动的是 MiniDispatcher ，
-			 * 在集群上提交任务时，集群 上启动的是 StandaloneDispatcher
+			 * 在集群上提交任务时，集群上启动的是 StandaloneDispatcher
 			 *
 			 * 提交之后 Dispatcher的后续的处理的过程可以看 Dispatcher类的submitJob方法；
 			 */
@@ -734,7 +734,7 @@ public class MiniCluster implements JobExecutorService, AutoCloseableAsync {
 		synchronized (lock) {
 			checkState(running, "MiniCluster is not yet running.");
 			try {
-				return dispatcherGatewayRetriever.getFuture().get();
+				return dispatcherGatewayRetriever.getFuture().get();  //getFuture() 是一个模板方法设计模式，会调用子类的createGateway()创建代理对象；
 			} catch (ExecutionException e) {
 				throw new LeaderRetrievalException("Could not retrieve the leading dispatcher.", ExceptionUtils.stripExecutionException(e));
 			}
