@@ -55,18 +55,20 @@ import java.util.UUID;
  * to a job manager.
  *
  * <p>Before the task slot table can be used, it must be started via the {@link #start} method.
+ *
+ * TaskExecutor 主要通过 TaskSlotTable 来管理它所拥有的所有 slot :
  */
 public class TaskSlotTable implements TimeoutListener<AllocationID> {
 
 	private static final Logger LOG = LoggerFactory.getLogger(TaskSlotTable.class);
 
 	/** Timer service used to time out allocated slots. */
-	private final TimerService<AllocationID> timerService;
+	private final TimerService<AllocationID> timerService;  //
 
-	/** The list of all task slots. */
+	/** The list of all task slots. 包含的所有 TaskSlot，list集合下标对应TaskSlot的index值  */
 	private final List<TaskSlot> taskSlots;
 
-	/** Mapping from allocation id to task slot. */
+	/** Mapping from allocation id to task slot.  <allocationID,TaskSlot> 映射关系   </> */
 	private final Map<AllocationID, TaskSlot> allocationIDTaskSlotMap;
 
 	/** Mapping from execution attempt id to task and task slot. */
@@ -153,16 +155,19 @@ public class TaskSlotTable implements TimeoutListener<AllocationID> {
 	// Slot report methods
 	// ---------------------------------------------------------------------
 
+	/**
+	 * 获得一个 SlotReport 对象， SlotReport 中包含当前 TaskExecutor 中所有 slot 的状态以及它们的分配情况。
+	 */
 	public SlotReport createSlotReport(ResourceID resourceId) {
 		final int numberSlots = taskSlots.size();
 
 		List<SlotStatus> slotStatuses = Arrays.asList(new SlotStatus[numberSlots]);
 
-		for (int i = 0; i < numberSlots; i++) {
+		for (int i = 0; i < numberSlots; i++) {  //所有slot
 			TaskSlot taskSlot = taskSlots.get(i);
 			SlotID slotId = new SlotID(resourceId, taskSlot.getIndex());
 
-			SlotStatus slotStatus = new SlotStatus(
+			SlotStatus slotStatus = new SlotStatus(   //Slot状态，
 				slotId,
 				taskSlot.getResourceProfile(),
 				taskSlot.getJobId(),
@@ -189,19 +194,28 @@ public class TaskSlotTable implements TimeoutListener<AllocationID> {
 	 * @param allocationId identifying the allocation
 	 * @param slotTimeout until the slot times out
 	 * @return True if the task slot could be allocated; otherwise false
+	 *
+	 * 将指定 index 的 slot 分配给 AllocationID 对应的请求
+	 * 这个方法会调用 TaskSlot.allocate(JobID newJobId, AllocationID newAllocationId) 方法
+	 *
+	 * 需要注意的是，allocateSlot 方法的最后一个参数是一个超时时间。我们注意到，TaskSlotTable 有一个成员变量是 TimerService<AllocationID> timerService，
+	 * 通过 timeService 可以注册定时器，如果定时器在超时时间到达之前没有被取消，那么 SlotAction.timeout 方法就会被调用。
+	 * 如果被分配的 slot 关联的 slot 在超时之前没有被取消，那么该 slot 就会被重新释放，标记为 Free 状态。
+	 *
+	 * 注意：定时器的取消是在 markSlotActive 时做的，所以这个定时器的作用就是：防止一直在allocated状态，而未使用，所以在active状态的时候，取消的定时器；
 	 */
 	public boolean allocateSlot(int index, JobID jobId, AllocationID allocationId, Time slotTimeout) {
 		checkInit();
 
-		TaskSlot taskSlot = taskSlots.get(index);
+		TaskSlot taskSlot = taskSlots.get(index);  //根据index获取指定的TaskSlot，
 
-		boolean result = taskSlot.allocate(jobId, allocationId);
+		boolean result = taskSlot.allocate(jobId, allocationId);  //然后调用这个TaskSlot的 allocate 方法，分配这个TaskSlot；
 
 		if (result) {
 			// update the allocation id to task slot map
 			allocationIDTaskSlotMap.put(allocationId, taskSlot);
 
-			// register a timeout for this slot since it's in state allocated
+			// register a timeout for this slot since it's in state allocated  注册一个定时器，如果在超时之前这个定时器还没有被取消，那么这个slot就会被释放，回到 Free 状态；
 			timerService.registerTimeout(allocationId, slotTimeout.getSize(), slotTimeout.getUnit());
 
 			// add this slot to the set of job slots
@@ -225,6 +239,9 @@ public class TaskSlotTable implements TimeoutListener<AllocationID> {
 	 * @param allocationId to identify the task slot to mark as active
 	 * @throws SlotNotFoundException if the slot could not be found for the given allocation id
 	 * @return True if the slot could be marked active; otherwise false
+	 *
+	 * 标记 slot 为 Active；
+	 * 标记的时候，会取消在分配 slot 的时候关联的定时器；此时这个Slot才算分配成功；如果一直不标记active，那么定时器超时的时候，slot会被重新标记为 Free；
 	 */
 	public boolean markSlotActive(AllocationID allocationId) throws SlotNotFoundException {
 		checkInit();
@@ -236,7 +253,7 @@ public class TaskSlotTable implements TimeoutListener<AllocationID> {
 				// unregister a potential timeout
 				LOG.info("Activate slot {}.", allocationId);
 
-				timerService.unregisterTimeout(allocationId);
+				timerService.unregisterTimeout(allocationId);  //会取消在分配 slot 的时候关联的定时器；此时这个Slot才算分配成功；
 
 				return true;
 			} else {

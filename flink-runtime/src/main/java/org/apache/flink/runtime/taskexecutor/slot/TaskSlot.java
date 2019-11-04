@@ -48,6 +48,10 @@ import java.util.Map;
  * <p>An allocated or active slot can only be freed if it is empty. If it is not empty, then it's state
  * can be set to releasing indicating that it can be freed once it becomes empty.
  */
+
+/**
+ * TaskSlot 是在 TaskExecutor 中对 slot 的抽象，可能处于 Free, Releasing, Allocated, Active 这四种状态之中
+ */
 public class TaskSlot {
 
 	/** Index of the task slot. */
@@ -56,11 +60,11 @@ public class TaskSlot {
 	/** Resource characteristics for this slot. */
 	private final ResourceProfile resourceProfile;
 
-	/** Tasks running in this slot. */
+	/** Tasks running in this slot.  在一个 Slot 中可能执行多个 Task */
 	private final Map<ExecutionAttemptID, Task> tasks;
 
 	/** State of this slot. */
-	private TaskSlotState state;
+	private TaskSlotState state;    //四种状态；
 
 	/** Job id to which the slot has been allocated; null if not allocated. */
 	private JobID jobId;
@@ -158,6 +162,8 @@ public class TaskSlot {
 	 * @param task to be added to the task slot
 	 * @throws IllegalStateException if the task slot is not in state active
 	 * @return true if the task was added to the task slot; otherwise false
+	 *
+	 * 可以通过 add() 方法往这个Slot中添加task，但是 需要保证这些 Task 都来自同一个 Job
 	 */
 	public boolean add(Task task) {
 		// Check that this slot has been assigned to the job sending this task
@@ -204,6 +210,9 @@ public class TaskSlot {
 	 * @param newJobId to allocate the slot for
 	 * @param newAllocationId to identify the slot allocation
 	 * @return True if the slot was allocated for the given job and allocation id; otherwise false
+	 *
+	 * 把这个TaskSlot分配给指定的 Job，如果这个slot已经被分配给指定的job了(或者在这个job上状态是active)，返回true，否则，返回false；
+	 * 将 slot 标记为 Allocated 状态
 	 */
 	public boolean allocate(JobID newJobId, AllocationID newAllocationId) {
 		if (TaskSlotState.FREE == state) {
@@ -264,6 +273,7 @@ public class TaskSlot {
 	 * Mark the slot as free. A slot can only marked as free if it's empty.
 	 *
 	 * @return True if the new state is free; otherwise false
+	 * 只有在所有 Task 都被移除之后才能释放成功
 	 */
 	public boolean markFree() {
 		if (isEmpty()) {

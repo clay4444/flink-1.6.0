@@ -104,9 +104,10 @@ public class SocketTextStreamWordCount {
         text.flatMap(new LineSplitter()).setParallelism(1) // group by the tuple field "0" and sum up tuple field "1"
                 .keyBy(1).sum(1).setParallelism(1).print();
 
+		System.out.println(env.getExecutionPlan());
+
         // execute program
         env.execute("Java WordCount from SocketTextStream Example");
-
     }
 
     /**

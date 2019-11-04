@@ -1022,7 +1022,7 @@ public class JobMaster extends FencedRpcEndpoint<JobMasterId> implements JobMast
 
 	/**
 	 * JobMaster 启动后会和 ResourceManager 建立连接，连接被封装为 ResourceManagerConnection。
-	 * 一旦连接建立之后，JobMaster 就可以通过 RPC 调用和 ResourceManager 进行通信了：
+	 * 一旦连接建立之后，JobMaster 就可以通过 RPC 调用和 ResourceManager 进行通信了：主要是向rm 申请资源；
 	 */
 	private void startJobMasterServices() throws Exception {
 		// start the slot pool make sure the slot pool now accepts messages for this leader
