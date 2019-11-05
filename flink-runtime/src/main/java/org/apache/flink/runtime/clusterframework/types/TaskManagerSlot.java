@@ -33,6 +33,8 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
 /**
  * A TaskManagerSlot represents a slot located in a TaskManager. It has a unique identification and
  * resource profile associated.
+ *
+ * 我们平常说的slot 就是 TaskManagerSlot；
  */
 public class TaskManagerSlot {
 
@@ -40,10 +42,10 @@ public class TaskManagerSlot {
 	private final SlotID slotId;
 
 	/** The resource profile of this slot. */
-	private final ResourceProfile resourceProfile;
+	private final ResourceProfile resourceProfile; 	//资源描述信息
 
 	/** Gateway to the TaskExecutor which owns the slot. */
-	private final TaskExecutorConnection taskManagerConnection;
+	private final TaskExecutorConnection taskManagerConnection;	 //和tm的连接信息
 
 	/** Allocation id for which this slot has been allocated. */
 	private AllocationID allocationId;

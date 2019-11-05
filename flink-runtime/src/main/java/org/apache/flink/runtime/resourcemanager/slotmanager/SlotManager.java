@@ -68,6 +68,15 @@ import java.util.concurrent.TimeoutException;
  * <p>In order to free resources and avoid resource leaks, idling task managers (task managers whose
  * slots are currently not used) and pending slot requests time out triggering their release and
  * failure, respectively.
+ *
+ * SlotManager 维护了所有已经注册的TaskExecutor 的所有 slot 的状态，它们的分配情况；
+ * 还维护了所有处于等待状态的 slot 请求；
+ *
+ * 每当有一个新的 slot 注册或者一个已经分配的 slot 被释放的时候，SlotManager 会试图去满足处于等待状态 slot request。
+ * 如果可用的 slot 不足以满足要求，SlotManager 会通过 ResourceActions#allocateResource(ResourceProfile) 来告知 ResourceManager,
+ * ResourceManager 可能会尝试启动新的 TaskExecutor (如 Yarn 模式下)。
+ *
+ * 此外，长时间处于空闲状态的 TaskExecutor 或者长时间没有被满足的 pending slot request，会触发超时机制进行处理。
  */
 public class SlotManager implements AutoCloseable {
 	private static final Logger LOG = LoggerFactory.getLogger(SlotManager.class);
@@ -85,19 +94,19 @@ public class SlotManager implements AutoCloseable {
 	private final Time taskManagerTimeout;
 
 	/** Map for all registered slots. */
-	private final HashMap<SlotID, TaskManagerSlot> slots;
+	private final HashMap<SlotID, TaskManagerSlot> slots;  //所有的 slot (具体点是TaskManagerSlot)
 
 	/** Index of all currently free slots. */
-	private final LinkedHashMap<SlotID, TaskManagerSlot> freeSlots;
+	private final LinkedHashMap<SlotID, TaskManagerSlot> freeSlots;  //空闲的 slot
 
 	/** All currently registered task managers. */
-	private final HashMap<InstanceID, TaskManagerRegistration> taskManagerRegistrations;
+	private final HashMap<InstanceID, TaskManagerRegistration> taskManagerRegistrations;  //所有注册的tm
 
 	/** Map of fulfilled and active allocations for request deduplication purposes. */
 	private final HashMap<AllocationID, SlotID> fulfilledSlotRequests;
 
 	/** Map of pending/unfulfilled slot allocation requests. */
-	private final HashMap<AllocationID, PendingSlotRequest> pendingSlotRequests;
+	private final HashMap<AllocationID, PendingSlotRequest> pendingSlotRequests;  //在排队的 SlotRequest
 
 	/** ResourceManager's id. */
 	private ResourceManagerId resourceManagerId;
@@ -261,6 +270,10 @@ public class SlotManager implements AutoCloseable {
 	 * @param slotRequest specifying the requested slot specs
 	 * @return true if the slot request was registered; false if the request is a duplicate
 	 * @throws SlotManagerException if the slot request failed (e.g. not enough resources left)
+	 *
+	 * rm通过这个方法来请求slot；
+	 * SlotRequest 中封装了请求的 JobId, AllocationID 以及请求的资源描述 ResourceProfile；
+	 * SlotManager 会将 slot request 进一步封装为 PendingSlotRequest, 意为一个尚未被满足要求的 slot request。然后放进pending request 集合中；
 	 */
 	public boolean registerSlotRequest(SlotRequest slotRequest) throws SlotManagerException {
 		checkInit();
@@ -270,12 +283,13 @@ public class SlotManager implements AutoCloseable {
 
 			return false;
 		} else {
+			//将请求封装为 PendingSlotRequest
 			PendingSlotRequest pendingSlotRequest = new PendingSlotRequest(slotRequest);
 
-			pendingSlotRequests.put(slotRequest.getAllocationId(), pendingSlotRequest);
+			pendingSlotRequests.put(slotRequest.getAllocationId(), pendingSlotRequest); //放进pendingSlotRequests 中；
 
 			try {
-				internalRequestSlot(pendingSlotRequest);
+				internalRequestSlot(pendingSlotRequest);  //看这里，执行请求分配slot的逻辑
 			} catch (ResourceManagerException e) {
 				// requesting the slot failed --> remove pending slot request
 				pendingSlotRequests.remove(slotRequest.getAllocationId());
@@ -318,6 +332,8 @@ public class SlotManager implements AutoCloseable {
 	 *
 	 * @param taskExecutorConnection for the new task manager
 	 * @param initialSlotReport for the new task manager
+	 *
+	 * 当一个新的 TaskManager  注册的时候，registerTaskManager 被调用：
 	 */
 	public void registerTaskManager(final TaskExecutorConnection taskExecutorConnection, SlotReport initialSlotReport) {
 		checkInit();
@@ -341,9 +357,10 @@ public class SlotManager implements AutoCloseable {
 
 			taskManagerRegistrations.put(taskExecutorConnection.getInstanceID(), taskManagerRegistration);
 
+			// 依次注册所有的 slot
 			// next register the new slots
 			for (SlotStatus slotStatus : initialSlotReport) {
-				registerSlot(
+				registerSlot(  //看这里，注册一个slot
 					slotStatus.getSlotID(),
 					slotStatus.getAllocationID(),
 					slotStatus.getJobID(),
@@ -480,12 +497,15 @@ public class SlotManager implements AutoCloseable {
 	 * @param requestResourceProfile specifying the resource requirements for the a slot request
 	 * @return A matching slot which fulfills the given resource profile. Null if there is no such
 	 * slot available.
+	 *
+	 * 根据资源请求，找到合适的slot (free)，
+	 * 注意：有可能找不到；
 	 */
 	protected TaskManagerSlot findMatchingSlot(ResourceProfile requestResourceProfile) {
-		Iterator<Map.Entry<SlotID, TaskManagerSlot>> iterator = freeSlots.entrySet().iterator();
+		Iterator<Map.Entry<SlotID, TaskManagerSlot>> iterator = freeSlots.entrySet().iterator();  //只找free状态的；
 
 		while (iterator.hasNext()) {
-			TaskManagerSlot taskManagerSlot = iterator.next().getValue();
+			TaskManagerSlot taskManagerSlot = iterator.next().getValue(); 	//具体slot
 
 			// sanity check
 			Preconditions.checkState(
@@ -493,7 +513,7 @@ public class SlotManager implements AutoCloseable {
 				"TaskManagerSlot %s is not in state FREE but %s.",
 				taskManagerSlot.getSlotId(), taskManagerSlot.getState());
 
-			if (taskManagerSlot.getResourceProfile().isMatching(requestResourceProfile)) {
+			if (taskManagerSlot.getResourceProfile().isMatching(requestResourceProfile)) {  //匹配方式：当前这个slot的各个资源都比需要的资源要大就可以；
 				iterator.remove();
 				return taskManagerSlot;
 			}
@@ -515,6 +535,8 @@ public class SlotManager implements AutoCloseable {
 	 * @param allocationId which is currently deployed in the slot
 	 * @param resourceProfile of the slot
 	 * @param taskManagerConnection to communicate with the remote task manager
+	 *
+	 * 注册一个slot
 	 */
 	private void registerSlot(
 			SlotID slotId,
@@ -533,8 +555,9 @@ public class SlotManager implements AutoCloseable {
 			resourceProfile,
 			taskManagerConnection);
 
-		slots.put(slotId, slot);
+		slots.put(slotId, slot); //创建一个 TaskManagerSlot 对象，并加入 slots 中
 
+		//更新slot，主要的逻辑：看是否有pending request，如果有的话，看是否能匹配，可以匹配，则把slot分配给request，没有匹配的或者根本没有pending request，就放进freeSlot中。
 		updateSlot(slotId, allocationId, jobId);
 	}
 
@@ -643,14 +666,18 @@ public class SlotManager implements AutoCloseable {
 	 *
 	 * @param pendingSlotRequest to allocate a slot for
 	 * @throws ResourceManagerException if the resource manager cannot allocate more resource
+	 * 重点：
+	 * 执行请求分配slot的逻辑
 	 */
 	private void internalRequestSlot(PendingSlotRequest pendingSlotRequest) throws ResourceManagerException {
+		//首先从 FREE 状态的已注册的 slot 中选择符合要求的 slot
 		TaskManagerSlot taskManagerSlot = findMatchingSlot(pendingSlotRequest.getResourceProfile());
 
-		if (taskManagerSlot != null) {
-			allocateSlot(taskManagerSlot, pendingSlotRequest);
+		if (taskManagerSlot != null) {  //说明找到了，
+			allocateSlot(taskManagerSlot, pendingSlotRequest);  //看这里，开始分配
 		} else {
-			resourceActions.allocateResource(pendingSlotRequest.getResourceProfile());
+			//没有找到合适的资源，直接向rm申请，调用 resourceActions#allocateResource 分配资源；
+			resourceActions.allocateResource(pendingSlotRequest.getResourceProfile());  //没有找到，就会调用这个方法；
 		}
 	}
 
@@ -660,16 +687,19 @@ public class SlotManager implements AutoCloseable {
 	 *
 	 * @param taskManagerSlot to allocate for the given slot request
 	 * @param pendingSlotRequest to allocate the given slot for
+	 *
+	 * 把一个 TaskManagerSlot 分配给 一个 PendingSlotRequest
+	 * 具体是如何进行分配呢？主要就是rpc调用tm的方法，来分配slot；这个 RPC 调用就是在这里发生的；
 	 */
 	private void allocateSlot(TaskManagerSlot taskManagerSlot, PendingSlotRequest pendingSlotRequest) {
 		Preconditions.checkState(taskManagerSlot.getState() == TaskManagerSlot.State.FREE);
 
 		TaskExecutorConnection taskExecutorConnection = taskManagerSlot.getTaskManagerConnection();
-		TaskExecutorGateway gateway = taskExecutorConnection.getTaskExecutorGateway();
+		TaskExecutorGateway gateway = taskExecutorConnection.getTaskExecutorGateway();   //获取tm代理对象，因为需要rpc调用tm的方法；
 
 		final CompletableFuture<Acknowledge> completableFuture = new CompletableFuture<>();
 		final AllocationID allocationId = pendingSlotRequest.getAllocationId();
-		final SlotID slotId = taskManagerSlot.getSlotId();
+		final SlotID slotId = taskManagerSlot.getSlotId();  // slot id
 		final InstanceID instanceID = taskManagerSlot.getInstanceId();
 
 		taskManagerSlot.assignPendingSlotRequest(pendingSlotRequest);

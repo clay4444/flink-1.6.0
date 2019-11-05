@@ -28,6 +28,7 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /**
  * This describes the requirement of the slot, mainly used by JobManager requesting slot from ResourceManager.
+ * 主要用来描述slot的需求，主要用于 jm 向 rm 请求资源；
  */
 public class SlotRequest implements Serializable {
 
@@ -40,7 +41,7 @@ public class SlotRequest implements Serializable {
 	private final AllocationID allocationId;
 
 	/** The resource profile of the required slot */
-	private final ResourceProfile resourceProfile;
+	private final ResourceProfile resourceProfile;  //需要的资源描述
 
 	/** Address of the emitting job manager */
 	private final String targetAddress;

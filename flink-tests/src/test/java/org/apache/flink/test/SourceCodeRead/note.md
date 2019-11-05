@@ -1,4 +1,14 @@
 
+### 大致流程
+1. 启rm       -> leader 竞选
+2. 启tm，tm汇报slot给rm(刚启动/心跳)         -> 没有leader 竞选
+3. 启dispatcher，         -> leader 竞选
+4. 开始调用阻塞执行方法，dispatcher#submitJob jobGraph,  (rpc)
+5. dispatcher#submitJob:  创建 JobManagerRunner(用来启jobMaster), 然后start启动，       -> leader竞选
+6. JobManagerRunner 拿到授权，回调时，启动jobMaster，然后和 rm 建立连接 (需要向rm申请资源)
+7. executionGraph.scheduleForExecution()  真正执行；
+
+
 ### 所有涉及到选举服务的组件
 1. rm
 2. dispatcher
@@ -19,6 +29,7 @@
 
 
 #### rm 中 slot的管理
+rm需要对所有的tm的slot进行管理，jobMaster都是向rm申请资源的；然后rm把请求 "转发" 给tm；
 
 
 

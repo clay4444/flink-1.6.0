@@ -43,6 +43,9 @@ import java.util.Objects;
  *     <li>Extended resources</li>
  * </ol>
  * The extended resources are compared ordered by the resource names.
+ *
+ * slot (TaskManagerSlot) 中的资源描述；
+ * 主要就是 CPU核数、堆内存大小、直接内存大小、网络内存大小 等具体的资源描述；
  */
 public class ResourceProfile implements Serializable, Comparable<ResourceProfile> {
 
