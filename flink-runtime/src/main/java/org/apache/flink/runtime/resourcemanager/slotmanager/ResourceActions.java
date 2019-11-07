@@ -26,11 +26,13 @@ import org.apache.flink.runtime.resourcemanager.exceptions.ResourceManagerExcept
 
 /**
  * Resource related actions which the {@link SlotManager} can perform.
+ * 资源动作； 请求资源 / 释放资源
  */
 public interface ResourceActions {
 
 	/**
 	 * Releases the resource with the given instance id.
+	 * 释放资源，
 	 *
 	 * @param instanceId identifying which resource to release
 	 * @param cause why the resource is released
@@ -39,6 +41,7 @@ public interface ResourceActions {
 
 	/**
 	 * Requests to allocate a resource with the given {@link ResourceProfile}.
+	 * 根据资源描述，请求一个额外的资源；***动态资源管理的关键***
 	 *
 	 * @param resourceProfile for the to be allocated resource
 	 * @throws ResourceManagerException if the resource cannot be allocated
@@ -47,6 +50,7 @@ public interface ResourceActions {
 
 	/**
 	 * Notifies that an allocation failure has occurred.
+	 * 通知rm资源分配失败；
 	 *
 	 * @param jobId to which the allocation belonged
 	 * @param allocationId identifying the failed allocation

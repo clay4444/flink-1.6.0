@@ -91,6 +91,10 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  *     <li>{@link #registerJobManager(JobMasterId, ResourceID, String, JobID, Time)} registers a {@link JobMaster} at the resource manager</li>
  *     <li>{@link #requestSlot(JobMasterId, SlotRequest, Time)} requests a slot from the resource manager</li>
  * </ul>
+ *
+ * rm 顶层接口；底层实现可能有：
+ * 1.StandaloneResourceManager
+ * 2.YarnResourceManager     **重要，可以实现资源的动态管理**
  */
 public abstract class ResourceManager<WorkerType extends ResourceIDRetrievable>
 		extends FencedRpcEndpoint<ResourceManagerId>
@@ -835,6 +839,7 @@ public abstract class ResourceManager<WorkerType extends ResourceIDRetrievable>
 		}
 	}
 
+	//释放资源
 	protected void releaseResource(InstanceID instanceId, Exception cause) {
 		WorkerType worker = null;
 
@@ -847,7 +852,7 @@ public abstract class ResourceManager<WorkerType extends ResourceIDRetrievable>
 		}
 
 		if (worker != null) {
-			if (stopWorker(worker)) {
+			if (stopWorker(worker)) {  //具体的模板方法，交给具体的rm去实现；
 				closeTaskManagerConnection(worker.getResourceID(), cause);
 			} else {
 				log.debug("Worker {} could not be stopped.", worker.getResourceID());
@@ -1022,6 +1027,7 @@ public abstract class ResourceManager<WorkerType extends ResourceIDRetrievable>
 
 	/**
 	 * Allocates a resource using the resource profile.
+	 * 动态的申请资源，启动一个新worker(tm)，具体看一下 YarnResourceManager 的实现，StandAlone不支持动态资源的申请
 	 *
 	 * @param resourceProfile The resource description
 	 */
@@ -1039,6 +1045,8 @@ public abstract class ResourceManager<WorkerType extends ResourceIDRetrievable>
 	 *
 	 * @param worker The worker.
 	 * @return True if the worker was stopped, otherwise false
+	 * 动态资源的释放 (检测到长期处理 idle 状态)
+	 * 模板方法，交给具体的 rm 去实现(比如yarn)
 	 */
 	public abstract boolean stopWorker(WorkerType worker);
 
@@ -1046,19 +1054,25 @@ public abstract class ResourceManager<WorkerType extends ResourceIDRetrievable>
 	//  Static utility classes
 	// ------------------------------------------------------------------------
 
+	//资源操作接口 (动态申请 / 释放资源)
+	//startNewWorker 和 stopWorker 这两个抽象方法是实现动态申请和释放资源的关键
+	//对于 Standalone 模式而言，TaskExecutor 是固定的，不支持动态启动和释放；
+	// 而对于在 Yarn 上运行的 Flink， YarnResourceManager 中这两个方法的具体实现就涉及到启动新的 container 和释放已经申请的 container。
 	private class ResourceActionsImpl implements ResourceActions {
 
+		//释放资源 (slotManager的检测线程，检测到tm长期处于 idle 状态，会调用这个，通知rm，)
 		@Override
 		public void releaseResource(InstanceID instanceId, Exception cause) {
 			validateRunsInMainThread();
 
-			ResourceManager.this.releaseResource(instanceId, cause);
+			ResourceManager.this.releaseResource(instanceId, cause); //模板方法，调用具体子类的 stopWorker()
 		}
 
+		//新申请分配资源
 		@Override
 		public void allocateResource(ResourceProfile resourceProfile) throws ResourceManagerException {
 			validateRunsInMainThread();
-			startNewWorker(resourceProfile);
+			startNewWorker(resourceProfile);  //模板方法，启动一个新的worker(对yarn来说，就是一个新的container)
 		}
 
 		@Override
@@ -1067,7 +1081,7 @@ public abstract class ResourceManager<WorkerType extends ResourceIDRetrievable>
 
 			JobManagerRegistration jobManagerRegistration = jobManagerRegistrations.get(jobId);
 			if (jobManagerRegistration != null) {
-				jobManagerRegistration.getJobManagerGateway().notifyAllocationFailure(allocationId, cause);
+				jobManagerRegistration.getJobManagerGateway().notifyAllocationFailure(allocationId, cause); //通知jm资源分配失败；
 			}
 		}
 	}

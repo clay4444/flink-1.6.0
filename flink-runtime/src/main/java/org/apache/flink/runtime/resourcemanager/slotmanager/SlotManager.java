@@ -77,6 +77,8 @@ import java.util.concurrent.TimeoutException;
  * ResourceManager 可能会尝试启动新的 TaskExecutor (如 Yarn 模式下)。
  *
  * 此外，长时间处于空闲状态的 TaskExecutor 或者长时间没有被满足的 pending slot request，会触发超时机制进行处理。
+ *
+ * ResoureManager 实际上是通过 ->SlotManager<- 来管理 TaskExecutor 所注册的所有 slot，
  */
 public class SlotManager implements AutoCloseable {
 	private static final Logger LOG = LoggerFactory.getLogger(SlotManager.class);
@@ -181,6 +183,7 @@ public class SlotManager implements AutoCloseable {
 
 	// ---------------------------------------------------------------------------------------------
 	// Component lifecycle methods
+	// 生命周期
 	// ---------------------------------------------------------------------------------------------
 
 	/**
@@ -189,6 +192,9 @@ public class SlotManager implements AutoCloseable {
 	 * @param newResourceManagerId to use for communication with the task managers
 	 * @param newMainThreadExecutor to use to run code in the ResourceManager's main thread
 	 * @param newResourceActions to use for resource (de-)allocations
+	 *
+	 * start：
+	 * 主要会启动两个周期性的检测任务，一个用于检测tm是否长时间处于空闲状态，另一个用于检测slot request 是否超时；
 	 */
 	public void start(ResourceManagerId newResourceManagerId, Executor newMainThreadExecutor, ResourceActions newResourceActions) {
 		LOG.info("Starting the SlotManager.");
@@ -199,16 +205,18 @@ public class SlotManager implements AutoCloseable {
 
 		started = true;
 
+		//检查 TaskExecutor 是否长时间处于 idle 状态
 		taskManagerTimeoutCheck = scheduledExecutor.scheduleWithFixedDelay(
 			() -> mainThreadExecutor.execute(
-				() -> checkTaskManagerTimeouts()),
+				() -> checkTaskManagerTimeouts()),  //看这里，具体检查逻辑
 			0L,
 			taskManagerTimeout.toMilliseconds(),
 			TimeUnit.MILLISECONDS);
 
+		//检查 slot request 是否超时
 		slotRequestTimeoutCheck = scheduledExecutor.scheduleWithFixedDelay(
 			() -> mainThreadExecutor.execute(
-				() -> checkSlotRequestTimeouts()),
+				() -> checkSlotRequestTimeouts()), //看这里，具体检查逻辑
 			0L,
 			slotRequestTimeout.toMilliseconds(),
 			TimeUnit.MILLISECONDS);
@@ -307,15 +315,17 @@ public class SlotManager implements AutoCloseable {
 	 *
 	 * @param allocationId identifying the pending slot request
 	 * @return True if a pending slot request was found; otherwise false
+	 *
+	 * 取消一个slot request
 	 */
 	public boolean unregisterSlotRequest(AllocationID allocationId) {
 		checkInit();
 
-		PendingSlotRequest pendingSlotRequest = pendingSlotRequests.remove(allocationId);
+		PendingSlotRequest pendingSlotRequest = pendingSlotRequests.remove(allocationId);  //从队列中移除
 
 		if (null != pendingSlotRequest) {
 			LOG.debug("Cancel slot request {}.", allocationId);
-
+			//取消请求
 			cancelPendingSlotRequest(pendingSlotRequest);
 
 			return true;
@@ -402,6 +412,8 @@ public class SlotManager implements AutoCloseable {
 	 * @param instanceId identifying the task manager for which to report the slot status
 	 * @param slotReport containing the status for all of its slots
 	 * @return true if the slot status has been updated successfully, otherwise false
+	 *
+	 * tm通过心跳向rm汇报slot status，rm 调用 slotManager 的就是这个方法；
 	 */
 	public boolean reportSlotStatus(InstanceID instanceId, SlotReport slotReport) {
 		checkInit();
@@ -413,7 +425,7 @@ public class SlotManager implements AutoCloseable {
 		if (null != taskManagerRegistration) {
 
 			for (SlotStatus slotStatus : slotReport) {
-				updateSlot(slotStatus.getSlotID(), slotStatus.getAllocationID(), slotStatus.getJobID());
+				updateSlot(slotStatus.getSlotID(), slotStatus.getAllocationID(), slotStatus.getJobID());  //这里需要更新slot
 			}
 
 			return true;
@@ -667,7 +679,7 @@ public class SlotManager implements AutoCloseable {
 	 * @param pendingSlotRequest to allocate a slot for
 	 * @throws ResourceManagerException if the resource manager cannot allocate more resource
 	 * 重点：
-	 * 执行请求分配slot的逻辑
+	 * 执行 请求分配slot 的逻辑
 	 */
 	private void internalRequestSlot(PendingSlotRequest pendingSlotRequest) throws ResourceManagerException {
 		//首先从 FREE 状态的已注册的 slot 中选择符合要求的 slot
@@ -676,8 +688,10 @@ public class SlotManager implements AutoCloseable {
 		if (taskManagerSlot != null) {  //说明找到了，
 			allocateSlot(taskManagerSlot, pendingSlotRequest);  //看这里，开始分配
 		} else {
-			//没有找到合适的资源，直接向rm申请，调用 resourceActions#allocateResource 分配资源；
+			//没有找到合适的资源，直接向rm申请，调用 resourceActions#allocateResource 分配资源；  *** 动态资源管理的关键 ***
 			resourceActions.allocateResource(pendingSlotRequest.getResourceProfile());  //没有找到，就会调用这个方法；
+			//resourceActions的唯一实现在rm顶层：ResourceManager # ResourceActionsImpl，然后调用startNewWorker(), 模板方法，运行时调用具体实现，
+			//对于YarnResourceManager来说，是新启一个container，对于standalone rm来说，无法提供实现；
 		}
 	}
 
@@ -697,11 +711,12 @@ public class SlotManager implements AutoCloseable {
 		TaskExecutorConnection taskExecutorConnection = taskManagerSlot.getTaskManagerConnection();
 		TaskExecutorGateway gateway = taskExecutorConnection.getTaskExecutorGateway();   //获取tm代理对象，因为需要rpc调用tm的方法；
 
-		final CompletableFuture<Acknowledge> completableFuture = new CompletableFuture<>();
+		final CompletableFuture<Acknowledge> completableFuture = new CompletableFuture<>();   //PendingSlotRequest 需要回调的Future，
 		final AllocationID allocationId = pendingSlotRequest.getAllocationId();
 		final SlotID slotId = taskManagerSlot.getSlotId();  // slot id
 		final InstanceID instanceID = taskManagerSlot.getInstanceId();
 
+		//taskManagerSlot 状态变为 PENDING
 		taskManagerSlot.assignPendingSlotRequest(pendingSlotRequest);
 		pendingSlotRequest.setRequestFuture(completableFuture);
 
@@ -714,7 +729,7 @@ public class SlotManager implements AutoCloseable {
 
 		taskManagerRegistration.markUsed();
 
-		// RPC call to the task manager
+		// RPC call to the task manager  rpc 调用tm的 requestSlot 方法，分配slot
 		CompletableFuture<Acknowledge> requestFuture = gateway.requestSlot(
 			slotId,
 			pendingSlotRequest.getJobId(),
@@ -723,31 +738,38 @@ public class SlotManager implements AutoCloseable {
 			resourceManagerId,
 			taskManagerRequestTimeout);
 
-		requestFuture.whenComplete(
+		requestFuture.whenComplete( //rpc tm -> requestSlot，调用完成
 			(Acknowledge acknowledge, Throwable throwable) -> {
 				if (acknowledge != null) {
-					completableFuture.complete(acknowledge);
+					completableFuture.complete(acknowledge); //完成 slot request future
 				} else {
 					completableFuture.completeExceptionally(throwable);
 				}
 			});
 
-		completableFuture.whenCompleteAsync(
+		//PendingSlotRequest 请求完成的回调函数
+		//PendingSlotRequest 请求完成可能是由于上面 RPC 调用完成，也可能是因为 PendingSlotRequest 被取消
+		completableFuture.whenCompleteAsync(  //slot request future 调用完成；
 			(Acknowledge acknowledge, Throwable throwable) -> {
 				try {
 					if (acknowledge != null) {
-						updateSlot(slotId, allocationId, pendingSlotRequest.getJobId());
+						//如果请求成功，则取消 pendingSlotRequest，并更新 slot 状态 PENDING -> ALLOCATED
+						updateSlot(slotId, allocationId, pendingSlotRequest.getJobId()); //分配完成，需要更新slot status，
 					} else {
 						if (throwable instanceof SlotOccupiedException) {
+							//这个 slot 已经被占用了，更新状态
 							SlotOccupiedException exception = (SlotOccupiedException) throwable;
 							updateSlot(slotId, exception.getAllocationId(), exception.getJobId());
 						} else {
+							//请求失败，将 pendingSlotRequest 从 TaskManagerSlot 中移除
 							removeSlotRequestFromSlot(slotId, allocationId);
 						}
 
 						if (!(throwable instanceof CancellationException)) {
+							//slot request 请求失败，会进行重试
 							handleFailedSlotRequest(slotId, allocationId, throwable);
 						} else {
+							//主动取消
 							LOG.debug("Slot allocation request {} has been cancelled.", allocationId, throwable);
 						}
 					}
@@ -862,6 +884,8 @@ public class SlotManager implements AutoCloseable {
 	 * @param slotId identifying the slot which was assigned to the slot request before
 	 * @param allocationId identifying the failed slot request
 	 * @param cause of the failure
+	 *
+	 * 处理失败的slot request，
 	 */
 	private void handleFailedSlotRequest(SlotID slotId, AllocationID allocationId, Throwable cause) {
 		PendingSlotRequest pendingSlotRequest = pendingSlotRequests.get(allocationId);
@@ -872,7 +896,7 @@ public class SlotManager implements AutoCloseable {
 			pendingSlotRequest.setRequestFuture(null);
 
 			try {
-				internalRequestSlot(pendingSlotRequest);
+				internalRequestSlot(pendingSlotRequest);  //重试的逻辑：重新请求分配slot
 			} catch (ResourceManagerException e) {
 				pendingSlotRequests.remove(allocationId);
 
@@ -907,12 +931,14 @@ public class SlotManager implements AutoCloseable {
 	 * Cancels the given slot request.
 	 *
 	 * @param pendingSlotRequest to cancel
+	 *
+	 * 主动取消一个slot request
 	 */
 	private void cancelPendingSlotRequest(PendingSlotRequest pendingSlotRequest) {
-		CompletableFuture<Acknowledge> request = pendingSlotRequest.getRequestFuture();
+		CompletableFuture<Acknowledge> request = pendingSlotRequest.getRequestFuture();  //slot request 的future，那就是说可能有两种完成结果，一种是分配成功，另外一种是主动取消了slot request
 
 		if (null != request) {
-			request.cancel(false);
+			request.cancel(false); //主动取消
 		}
 	}
 
@@ -920,29 +946,32 @@ public class SlotManager implements AutoCloseable {
 	// Internal timeout methods
 	// ---------------------------------------------------------------------------------------------
 
+	//检查tm是否长期处于空闲状态；
 	private void checkTaskManagerTimeouts() {
 		if (!taskManagerRegistrations.isEmpty()) {
 			long currentTime = System.currentTimeMillis();
 
-			ArrayList<InstanceID> timedOutTaskManagerIds = new ArrayList<>(taskManagerRegistrations.size());
+			ArrayList<InstanceID> timedOutTaskManagerIds = new ArrayList<>(taskManagerRegistrations.size()); //InstanceID 标记一个tm
 
 			// first retrieve the timed out TaskManagers
-			for (TaskManagerRegistration taskManagerRegistration : taskManagerRegistrations.values()) {
-				if (currentTime - taskManagerRegistration.getIdleSince() >= taskManagerTimeout.toMilliseconds()) {
+			for (TaskManagerRegistration taskManagerRegistration : taskManagerRegistrations.values()) {    //已经注册的所有tm
+				if (currentTime - taskManagerRegistration.getIdleSince() >= taskManagerTimeout.toMilliseconds()) {  //空闲时间  > timeout时间
 					// we collect the instance ids first in order to avoid concurrent modifications by the
 					// ResourceActions.releaseResource call
-					timedOutTaskManagerIds.add(taskManagerRegistration.getInstanceId());
+					timedOutTaskManagerIds.add(taskManagerRegistration.getInstanceId());  //需要释放的tm
 				}
 			}
 
 			// second we trigger the release resource callback which can decide upon the resource release
 			for (InstanceID timedOutTaskManagerId : timedOutTaskManagerIds) {
 				LOG.debug("Release TaskExecutor {} because it exceeded the idle timeout.", timedOutTaskManagerId);
-				resourceActions.releaseResource(timedOutTaskManagerId, new FlinkException("TaskExecutor exceeded the idle timeout."));
+				//一旦 TaskExecutor 长时间处于空闲状态，则会通过 ResourceActions#releaseResource() 回调函数释放资源：
+				resourceActions.releaseResource(timedOutTaskManagerId, new FlinkException("TaskExecutor exceeded the idle timeout.")); //释放资源；
 			}
 		}
 	}
 
+	//检查 slot request 是否超时的具体逻辑
 	private void checkSlotRequestTimeouts() {
 		if (!pendingSlotRequests.isEmpty()) {
 			long currentTime = System.currentTimeMillis();
@@ -952,14 +981,14 @@ public class SlotManager implements AutoCloseable {
 			while (slotRequestIterator.hasNext()) {
 				PendingSlotRequest slotRequest = slotRequestIterator.next().getValue();
 
-				if (currentTime - slotRequest.getCreationTimestamp() >= slotRequestTimeout.toMilliseconds()) {
-					slotRequestIterator.remove();
+				if (currentTime - slotRequest.getCreationTimestamp() >= slotRequestTimeout.toMilliseconds()) {   //当前时间 - request的创建时间 > 设置的超时时间
+					slotRequestIterator.remove(); //移除
 
 					if (slotRequest.isAssigned()) {
-						cancelPendingSlotRequest(slotRequest);
+						cancelPendingSlotRequest(slotRequest);  //cancel掉已经 assign 的slot
 					}
 
-					resourceActions.notifyAllocationFailure(
+					resourceActions.notifyAllocationFailure(  //资源分配失败；通过 ResourceActions#notifyAllocationFailure() 告知 ResourceManager
 						slotRequest.getJobId(),
 						slotRequest.getAllocationId(),
 						new TimeoutException("The allocation could not be fulfilled in time."));

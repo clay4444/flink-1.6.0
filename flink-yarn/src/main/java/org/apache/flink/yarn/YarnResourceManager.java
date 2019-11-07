@@ -285,6 +285,7 @@ public class YarnResourceManager extends ResourceManager<YarnWorkerNode> impleme
 		Utils.deleteApplicationFiles(env);
 	}
 
+	//yarn rm 动态资源管理的实现，
 	@Override
 	public void startNewWorker(ResourceProfile resourceProfile) {
 		// Priority for worker containers - priorities are intra-application
@@ -293,7 +294,7 @@ public class YarnResourceManager extends ResourceManager<YarnWorkerNode> impleme
 		int mem = resourceProfile.getMemoryInMB() < 0 ? defaultTaskManagerMemoryMB : resourceProfile.getMemoryInMB();
 		int vcore = resourceProfile.getCpuCores() < 1 ? defaultCpus : (int) resourceProfile.getCpuCores();
 		Resource capability = Resource.newInstance(mem, vcore);
-		requestYarnContainer(capability, priority);
+		requestYarnContainer(capability, priority); //这里，启动一个新的container
 	}
 
 	@Override
@@ -449,6 +450,7 @@ public class YarnResourceManager extends ResourceManager<YarnWorkerNode> impleme
 		return new Tuple2<>(host, Integer.valueOf(port));
 	}
 
+	//启动一个新的container，回顾一个yarn的api，通知分配成功，是通过回调的方式的，
 	private void requestYarnContainer(Resource resource, Priority priority) {
 		resourceManagerClient.addContainerRequest(new AMRMClient.ContainerRequest(resource, null, null, priority));
 

@@ -29,12 +29,15 @@ import javax.annotation.Nullable;
 
 import java.util.concurrent.CompletableFuture;
 
+/**
+ * 等待状态的 slot request
+ */
 public class PendingSlotRequest {
 
 	private final SlotRequest slotRequest;
 
 	@Nullable
-	private CompletableFuture<Acknowledge> requestFuture;
+	private CompletableFuture<Acknowledge> requestFuture;    //request Future，可能分配成功被完成，也可能主动取消完成；
 
 	/** Timestamp when this pending slot request has been created. */
 	private final long creationTimestamp;
