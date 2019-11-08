@@ -50,6 +50,10 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  * Network I/O components of each {@link TaskManager} instance. The network environment contains
  * the data structures that keep track of all intermediate results and all data exchanges.
  */
+
+/**
+ * Task 启动的时候会向 NetworkEnvironment 进行注册，这里会为每一个 ResultPartition 分配 LocalBufferPool:
+ */
 public class NetworkEnvironment {
 
 	private static final Logger LOG = LoggerFactory.getLogger(NetworkEnvironment.class);
@@ -181,6 +185,7 @@ public class NetworkEnvironment {
 	//  Task operations
 	// --------------------------------------------------------------------------------------------
 
+	//注册一个Task，要给这个Task的输入和输出分配 buffer pool
 	public void registerTask(Task task) throws IOException {
 		final ResultPartition[] producedPartitions = task.getProducedPartitions();
 
@@ -190,7 +195,7 @@ public class NetworkEnvironment {
 			}
 
 			for (final ResultPartition partition : producedPartitions) {
-				setupPartition(partition);
+				setupPartition(partition);  //这里，输出
 			}
 
 			// Setup the buffer pool for each buffer reader

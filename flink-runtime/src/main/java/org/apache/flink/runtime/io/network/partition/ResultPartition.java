@@ -76,6 +76,11 @@ import static org.apache.flink.util.Preconditions.checkState;
  *
  * <h2>State management</h2>
  */
+
+/**
+ * 每一个 ResultPartition 都有一个关联的 ResultPartitionWriter; 也都有一个独立的 LocalBufferPool 负责提供写入数据所需的 buffer
+ * ResultPartition 实现了 ResultPartitionWriter 接口；
+ */
 public class ResultPartition implements ResultPartitionWriter, BufferPoolOwner {
 
 	private static final Logger LOG = LoggerFactory.getLogger(ResultPartition.class);
@@ -92,14 +97,20 @@ public class ResultPartition implements ResultPartitionWriter, BufferPoolOwner {
 	private final ResultPartitionType partitionType;
 
 	/** The subpartitions of this partition. At least one. */
+	// ResultPartition 由 ResultSubpartition 构成，
+	// ResultSubpartition 的数量由下游消费 Task 数和 DistributionPattern(ALL_TO_ALL、POINTWISE) 来决定。  数据分发模式，决定上游算子的 subtask 如何连接到下游算子的 subtask
+	// 例如，如果是 FORWARD，则下游只有一个消费者；如果是 SHUFFLE，则下游消费者的数量和下游算子的并行度一样
 	private final ResultSubpartition[] subpartitions;
 
+	//ResultPartitionManager 管理当前 TaskManager 所有的 ResultPartition
 	private final ResultPartitionManager partitionManager;
 
+	//通知当前ResultPartition有数据可供消费的回调函数回调
 	private final ResultPartitionConsumableNotifier partitionConsumableNotifier;
 
 	public final int numTargetKeyGroups;
 
+	//在有数据产出时，是否需要发送消息来调度或更新消费者（Stream模式下调度模式为 ScheduleMode.EAGER，无需发通知）
 	private final boolean sendScheduleOrUpdateConsumersMessage;
 
 	// - Runtime state --------------------------------------------------------
@@ -115,6 +126,7 @@ public class ResultPartition implements ResultPartitionWriter, BufferPoolOwner {
 
 	private BufferPool bufferPool;
 
+	//是否已经通知了消费者
 	private boolean hasNotifiedPipelinedConsumers;
 
 	private boolean isFinished;
@@ -126,7 +138,7 @@ public class ResultPartition implements ResultPartitionWriter, BufferPoolOwner {
 		TaskActions taskActions, // actions on the owning task
 		JobID jobId,
 		ResultPartitionID partitionId,
-		ResultPartitionType partitionType,
+		ResultPartitionType partitionType,  //partition 类型：BLOCKING、PIPELINED、PIPELINED_BOUNDED
 		int numberOfSubpartitions,
 		int numTargetKeyGroups,
 		ResultPartitionManager partitionManager,
@@ -147,6 +159,7 @@ public class ResultPartition implements ResultPartitionWriter, BufferPoolOwner {
 
 		// Create the subpartitions.
 		switch (partitionType) {
+			// Batch 模式，SpillableSubpartition，在 Buffer 不充足时将结果写入磁盘;
 			case BLOCKING:
 				for (int i = 0; i < subpartitions.length; i++) {
 					subpartitions[i] = new SpillableSubpartition(i, this, ioManager);
@@ -154,6 +167,7 @@ public class ResultPartition implements ResultPartitionWriter, BufferPoolOwner {
 
 				break;
 
+			// Streaming 模式，PipelinedSubpartition
 			case PIPELINED:
 			case PIPELINED_BOUNDED:
 				for (int i = 0; i < subpartitions.length; i++) {
