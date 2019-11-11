@@ -26,6 +26,11 @@ import java.io.IOException;
 /**
  * Interface for turning records into sequences of memory segments.
  */
+
+/**
+ * 顶层的序列化器接口
+ * 现在只有一个实现：SpanningRecordSerializer
+ */
 public interface RecordSerializer<T extends IOReadableWritable> {
 
 	/**

@@ -99,7 +99,7 @@ public class RecordWriter<T extends IOReadableWritable> {
 	/**
 	 * 构建RecordWriter；
 	 * @param writer    指的就是这个Task要写入的ResultPartition
-	 * @param channelSelector
+	 * @param channelSelector  用来决定一条记录写入哪个 channel
 	 * @param flushAlways
 	 */
 	public RecordWriter(ResultPartitionWriter writer, ChannelSelector<T> channelSelector, boolean flushAlways) {
@@ -107,7 +107,7 @@ public class RecordWriter<T extends IOReadableWritable> {
 		this.targetPartition = writer;
 		this.channelSelector = channelSelector;
 
-		this.numChannels = writer.getNumberOfSubpartitions();
+		this.numChannels = writer.getNumberOfSubpartitions(); //有几个 sub-partition 就有几个 channel
 
 		/*
 		 * The runtime exposes a channel abstraction for the produced results
@@ -119,14 +119,18 @@ public class RecordWriter<T extends IOReadableWritable> {
 
 		this.bufferBuilders = new Optional[numChannels];
 		for (int i = 0; i < numChannels; i++) {
-			serializers[i] = new SpanningRecordSerializer<T>();
+			serializers[i] = new SpanningRecordSerializer<T>(); 	//创建序列化器
 			bufferBuilders[i] = Optional.empty();
 		}
 	}
-
+	/**
+	 * ***** 重要，核心 ****  看这里
+	 * Task 通过 RecordWriter 输出一条记录的入口；
+	 * @param record：要发出的记录
+	 */
 	public void emit(T record) throws IOException, InterruptedException {
-		for (int targetChannel : channelSelector.selectChannels(record, numChannels)) {
-			sendToTarget(record, targetChannel);
+		for (int targetChannel : channelSelector.selectChannels(record, numChannels)) { //第一步：通过 ChannelSelector 确定写入的目标 channel (可能有多个)
+			sendToTarget(record, targetChannel); //这里
 		}
 	}
 
@@ -147,10 +151,11 @@ public class RecordWriter<T extends IOReadableWritable> {
 		sendToTarget(record, rng.nextInt(numChannels));
 	}
 
+	//把数据发送到下游某个具体的channel
 	private void sendToTarget(T record, int targetChannel) throws IOException, InterruptedException {
-		RecordSerializer<T> serializer = serializers[targetChannel];
+		RecordSerializer<T> serializer = serializers[targetChannel]; //拿到这个channel对应的序列化器，也就是说每个channel都有自己的序列化器 ！！！
 
-		SerializationResult result = serializer.addRecord(record);
+		SerializationResult result = serializer.addRecord(record);   //第二步：使用 RecordSerializer 对记录进行序列化
 
 		while (result.isFullBuffer()) {
 			if (tryFinishCurrentBufferBuilder(targetChannel, serializer)) {
@@ -160,9 +165,11 @@ public class RecordWriter<T extends IOReadableWritable> {
 				// a problem per se, but it can lead to stalls in the
 				// pipeline).
 				if (result.isFullRecord()) {
+					//当前这条记录也完整输出了
 					break;
 				}
 			}
+			//当前这条记录没有写完，申请新的 buffer 写入
 			BufferBuilder bufferBuilder = requestNewBufferBuilder(targetChannel);
 
 			result = serializer.continueWritingWithNextBufferBuilder(bufferBuilder);
@@ -170,6 +177,7 @@ public class RecordWriter<T extends IOReadableWritable> {
 		checkState(!serializer.hasSerializedData(), "All data should be written at once");
 
 		if (flushAlways) {
+			//强制刷新结果
 			targetPartition.flush(targetChannel);
 		}
 	}
@@ -223,15 +231,20 @@ public class RecordWriter<T extends IOReadableWritable> {
 		BufferBuilder bufferBuilder = bufferBuilders[targetChannel].get();
 		bufferBuilders[targetChannel] = Optional.empty();
 
-		numBytesOut.inc(bufferBuilder.finish());
+		numBytesOut.inc(bufferBuilder.finish()); //buffer 写满了，调用 bufferBuilder.finish 方法
 		serializer.clear();
 		return true;
 	}
 
+	//请求新的 BufferBuilder，用于写入数据 如果当前没有可用的 buffer，会阻塞
 	private BufferBuilder requestNewBufferBuilder(int targetChannel) throws IOException, InterruptedException {
 		checkState(!bufferBuilders[targetChannel].isPresent());
+
+		//从 LocalBufferPool 中请求 BufferBuilder
 		BufferBuilder bufferBuilder = targetPartition.getBufferProvider().requestBufferBuilderBlocking();
 		bufferBuilders[targetChannel] = Optional.of(bufferBuilder);
+
+		//添加一个BufferConsumer，用于读取写入到 MemorySegment 的数据
 		targetPartition.addBufferConsumer(bufferBuilder.createBufferConsumer(), targetChannel);
 		return bufferBuilder;
 	}

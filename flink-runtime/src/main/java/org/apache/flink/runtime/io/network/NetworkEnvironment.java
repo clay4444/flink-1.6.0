@@ -67,7 +67,7 @@ public class NetworkEnvironment {
 
 	private final ConnectionManager connectionManager;
 
-	//管理当前tm的所有 ResultPartition
+	//管理当前tm的所有 ResultPartition (每个task一个)
 	private final ResultPartitionManager resultPartitionManager;
 
 	private final TaskEventDispatcher taskEventDispatcher;
@@ -97,6 +97,7 @@ public class NetworkEnvironment {
 
 	private boolean isShutdown;
 
+	//创建一个  NetworkEnvironment 网络资源管理； tm创建的；
 	public NetworkEnvironment(
 			NetworkBufferPool networkBufferPool,
 			ConnectionManager connectionManager,
@@ -189,28 +190,31 @@ public class NetworkEnvironment {
 	//  Task operations
 	// --------------------------------------------------------------------------------------------
 
+	//Task 启动的时候调用这个方法，来获取输出用的网络资源( 内存 (buffer) )
 	//注册一个Task，要给这个Task的输入和输出分配 buffer pool
 	public void registerTask(Task task) throws IOException {
 		final ResultPartition[] producedPartitions = task.getProducedPartitions();
 
-		synchronized (lock) {
+		synchronized (lock) { //每个tm上会跑多个task，每个task一个线程，也就是多个线程，所有会有并发问题；
 			if (isShutdown) {
 				throw new IllegalStateException("NetworkEnvironment is shut down");
 			}
 
+			//为task设置输出资源
 			for (final ResultPartition partition : producedPartitions) {
 				setupPartition(partition);  //这里，为输出设置资源；
 			}
 
+			//为task设置输入资源
 			// Setup the buffer pool for each buffer reader
 			final SingleInputGate[] inputGates = task.getAllInputGates();
 			for (SingleInputGate gate : inputGates) {
-				setupInputGate(gate);
+				setupInputGate(gate);  //这里，为输入设置资源；
 			}
 		}
 	}
 
-	//每一个Task都对应一个ResultPartition，代表这个Task的输出；	需要为这个ResultPartition设置buffer资源；
+	//每一个Task都对应一个ResultPartition，代表这个Task的输出；	这里需要为这个ResultPartition设置buffer资源；
 	@VisibleForTesting
 	public void setupPartition(ResultPartition partition) throws IOException {
 		BufferPool bufferPool = null;
@@ -315,6 +319,7 @@ public class NetworkEnvironment {
 		}
 	}
 
+	//start 方法，用来启动；
 	public void start() throws IOException {
 		synchronized (lock) {
 			Preconditions.checkState(!isShutdown, "The NetworkEnvironment has already been shut down.");

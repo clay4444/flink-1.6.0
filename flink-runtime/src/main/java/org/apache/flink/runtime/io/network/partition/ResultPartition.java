@@ -79,6 +79,13 @@ import static org.apache.flink.util.Preconditions.checkState;
 
 /**
  *  ======================= Task的输出 =======================
+ *  这里涉及的流程：
+ *  1. tm启动时创建一个 NetworkEnvironment，并调用start()方法来启动，用来管理这个tm上的所有网络资源环境；
+ *  2. Task启动前，向所在tm上的 NetworkEnvironment#registerTask 来注册当前task，NetworkEnvironment会回调这个task的ResultPartition的registerBufferPool方法，来为ResultPartition(代表这个task的输出)设置输出数据需要的资源；
+ *  上面已经设置好了资源，那task要怎么往后发送数据呢？
+ *  3. task启动，创建一个RecordWriter，然后开始调用emit方法往下游发送数据，
+ *  	3.1 通过 ChannelSelector 确定写入的目标 channel
+ * 		3.2 找到目标channel对应的序列化器，使用 RecordSerializer 对记录进行序列化
  *
  *
  * ExecutionGraph 中的 ExecutionVertex 对应最终的 Task； 这个好理解；
@@ -210,6 +217,8 @@ public class ResultPartition implements ResultPartitionWriter, BufferPoolOwner {
 	 * The pool is registered with the partition *after* it as been constructed in order to conform
 	 * to the life-cycle of task registrations in the {@link TaskManager}.
 	 */
+
+	//Task启动的时候向 NetworkEnvironment 注册，然后NetworkEnvironment通过回调这个方法来为这个Task的ResultPartition(代表task的输出) 设置需要的内存资源；
 	public void registerBufferPool(BufferPool bufferPool) {
 		checkArgument(bufferPool.getNumberOfRequiredMemorySegments() >= getNumberOfSubpartitions(),
 				"Bug in result partition setup logic: Buffer pool has not enough guaranteed buffers for this result partition.");
