@@ -78,6 +78,15 @@ import static org.apache.flink.util.Preconditions.checkState;
  */
 
 /**
+ * ExecutionGraph 中的 ExecutionVertex 对应最终的 Task； 这个好理解；
+ * ExecutionGraph 中的 IntermediateResultPartition(代表最终的一个Task的具体输出)，对应实际执行图中的 ResultPartition(代表一个Task的具体输出)
+ * 个人总结：一个Task肯定对应一个 ResultPartition，而ResultPartition中 subPartition 的数量取决于下游有多少个算子要从这个Task的ResultPartition消费数据；
+ * 所以它的数量最终取决于下游算子的数量 和 上下游算子之间的数据分发模式，
+ *
+ * 关于InputGate和InputChannel的理解：
+ * InputGate好理解，它代表一个Task的输入，所以每个Task都对应一个InputGate；
+ * InputChannel 属于 InputGate，它代表从上游的一个subPartition到当前Task的一个消费管道，所以当前task从上游几个task上消费数据，当前InputGate就有几个InputChannel；
+ *
  * 每一个 ResultPartition 都有一个关联的 ResultPartitionWriter; 也都有一个独立的 LocalBufferPool 负责提供写入数据所需的 buffer
  * ResultPartition 实现了 ResultPartitionWriter 接口；
  */

@@ -53,6 +53,7 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /**
  * Task 启动的时候会向 NetworkEnvironment 进行注册，这里会为每一个 ResultPartition 分配 LocalBufferPool:
+ * 看代码这个对象好像是每个tm一个，
  */
 public class NetworkEnvironment {
 
@@ -60,10 +61,12 @@ public class NetworkEnvironment {
 
 	private final Object lock = new Object();
 
+	//网络资源池，从这里取资源；
 	private final NetworkBufferPool networkBufferPool;
 
 	private final ConnectionManager connectionManager;
 
+	//管理当前tm的所有 ResultPartition
 	private final ResultPartitionManager resultPartitionManager;
 
 	private final TaskEventDispatcher taskEventDispatcher;
@@ -211,13 +214,20 @@ public class NetworkEnvironment {
 		BufferPool bufferPool = null;
 
 		try {
+			//请求的MemorySegment大小：如果PartitionType 是 unbounded，则不限制buffer pool 的最大大小，否则为 sub-partition * taskmanager.network.memory.buffers-per-channel
 			int maxNumberOfMemorySegments = partition.getPartitionType().isBounded() ?
 				partition.getNumberOfSubpartitions() * networkBuffersPerChannel +
 					extraNetworkBuffersPerGate : Integer.MAX_VALUE;
+
+			//创建一个 LocalBufferPool，请求的最少的 MemorySegment 数量和 sub-partition 一致
+			//如果没有反压，则需要自己处理 buffer 的回收（主要是在batch模式）
 			bufferPool = networkBufferPool.createBufferPool(partition.getNumberOfSubpartitions(),
 				maxNumberOfMemorySegments);
+
+			//给这个 ResultPartition 分配 LocalBufferPool
 			partition.registerBufferPool(bufferPool);
 
+			//向 ResultPartitionManager 注册；resultPartitionManager：管理当前tm的所有resultPartition
 			resultPartitionManager.registerResultPartition(partition);
 		} catch (Throwable t) {
 			if (bufferPool != null) {

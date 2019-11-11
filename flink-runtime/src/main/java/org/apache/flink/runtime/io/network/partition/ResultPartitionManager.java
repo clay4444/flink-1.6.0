@@ -36,16 +36,20 @@ import static org.apache.flink.util.Preconditions.checkState;
 /**
  * The result partition manager keeps track of all currently produced/consumed partitions of a
  * task manager.
+ *
+ * 管理一个tm的所有 ResultPartition
  */
 public class ResultPartitionManager implements ResultPartitionProvider {
 
 	private static final Logger LOG = LoggerFactory.getLogger(ResultPartitionManager.class);
 
+	//放在这个table里
 	public final Table<ExecutionAttemptID, IntermediateResultPartitionID, ResultPartition>
 			registeredPartitions = HashBasedTable.create();
 
 	private boolean isShutdown;
 
+	//注册一个当前tm上的 ResultPartition
 	public void registerResultPartition(ResultPartition partition) throws IOException {
 		synchronized (registeredPartitions) {
 			checkState(!isShutdown, "Result partition manager already shut down.");
