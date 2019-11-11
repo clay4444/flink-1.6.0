@@ -78,6 +78,9 @@ import static org.apache.flink.util.Preconditions.checkState;
  */
 
 /**
+ *  ======================= Task的输出 =======================
+ *
+ *
  * ExecutionGraph 中的 ExecutionVertex 对应最终的 Task； 这个好理解；
  * ExecutionGraph 中的 IntermediateResultPartition(代表最终的一个Task的具体输出)，对应实际执行图中的 ResultPartition(代表一个Task的具体输出)
  * 个人总结：一个Task肯定对应一个 ResultPartition，而ResultPartition中 subPartition 的数量取决于下游有多少个算子要从这个Task的ResultPartition消费数据；
@@ -86,6 +89,7 @@ import static org.apache.flink.util.Preconditions.checkState;
  * 关于InputGate和InputChannel的理解：
  * InputGate好理解，它代表一个Task的输入，所以每个Task都对应一个InputGate；
  * InputChannel 属于 InputGate，它代表从上游的一个subPartition到当前Task的一个消费管道，所以当前task从上游几个task上消费数据，当前InputGate就有几个InputChannel；
+ * InputChannel 和 ExecutionEdge 一一对应
  *
  * 每一个 ResultPartition 都有一个关联的 ResultPartitionWriter; 也都有一个独立的 LocalBufferPool 负责提供写入数据所需的 buffer
  * ResultPartition 实现了 ResultPartitionWriter 接口；
@@ -142,13 +146,16 @@ public class ResultPartition implements ResultPartitionWriter, BufferPoolOwner {
 
 	private volatile Throwable cause;
 
+	/**
+	 * 构建这个 Task 的 ResultPartition；
+	 */
 	public ResultPartition(
 		String owningTaskName,
 		TaskActions taskActions, // actions on the owning task
 		JobID jobId,
 		ResultPartitionID partitionId,
 		ResultPartitionType partitionType,  //partition 类型：BLOCKING、PIPELINED、PIPELINED_BOUNDED
-		int numberOfSubpartitions,
+		int numberOfSubpartitions,			//有几个 sub-partition， sub-partition 对应 inputChannel
 		int numTargetKeyGroups,
 		ResultPartitionManager partitionManager,
 		ResultPartitionConsumableNotifier partitionConsumableNotifier,
@@ -171,7 +178,7 @@ public class ResultPartition implements ResultPartitionWriter, BufferPoolOwner {
 			// Batch 模式，SpillableSubpartition，在 Buffer 不充足时将结果写入磁盘;
 			case BLOCKING:
 				for (int i = 0; i < subpartitions.length; i++) {
-					subpartitions[i] = new SpillableSubpartition(i, this, ioManager);
+					subpartitions[i] = new SpillableSubpartition(i, this, ioManager);  //构建所有的sub-partition
 				}
 
 				break;
@@ -180,7 +187,7 @@ public class ResultPartition implements ResultPartitionWriter, BufferPoolOwner {
 			case PIPELINED:
 			case PIPELINED_BOUNDED:
 				for (int i = 0; i < subpartitions.length; i++) {
-					subpartitions[i] = new PipelinedSubpartition(i, this);
+					subpartitions[i] = new PipelinedSubpartition(i, this);    //构建所有的sub-partition， 和上面的不同
 				}
 
 				break;

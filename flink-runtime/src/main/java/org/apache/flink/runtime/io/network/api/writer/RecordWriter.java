@@ -50,19 +50,35 @@ import static org.apache.flink.util.Preconditions.checkState;
  *
  * @param <T> the type of the record that can be emitted with this record writer
  */
+
+/**
+ * Task 通过 RecordWriter 将结果写入 ResultPartition 中。
+ * RecordWriter 是对 ResultPartitionWriter 的一层封装，并负责将记录对象序列化到 buffer 中。先来看一下 RecordWriter 的成员变量和构造函数：
+ *
+ * 当 Task 通过 RecordWriter 输出一条记录时，主要流程为：
+ * 1. 通过 ChannelSelector 确定写入的目标 channel
+ * 2. 使用 RecordSerializer 对记录进行序列化
+ * 3. 向 ResultPartition 请求 BufferBuilder，用于写入序列化结果
+ * 4. 向 ResultPartition 添加 BufferConsumer，用于读取写入 Buffer 的数据
+ */
 public class RecordWriter<T extends IOReadableWritable> {
 
+	//底层的 ResultPartition,  ResultPartition implements ResultPartitionWriter,  所以targetPartition 就代表要写入的ResultPartition；也即是Task的输出
 	protected final ResultPartitionWriter targetPartition;
 
+	//决定一条记录应该写入哪一个channel， 即 sub-partition，yes， sub-partition 和 下游的channel 一一对应；
 	private final ChannelSelector<T> channelSelector;
 
+	//channel的数量，即 sub-partition的数量
 	private final int numChannels;
 
 	/**
 	 * {@link RecordSerializer} per outgoing channel.
 	 */
+	//序列化器
 	private final RecordSerializer<T>[] serializers;
 
+	//供每一个 channel 写入数据使用
 	private final Optional<BufferBuilder>[] bufferBuilders;
 
 	private final Random rng = new XORShiftRandom();
@@ -80,6 +96,12 @@ public class RecordWriter<T extends IOReadableWritable> {
 		this(writer, channelSelector, false);
 	}
 
+	/**
+	 * 构建RecordWriter；
+	 * @param writer    指的就是这个Task要写入的ResultPartition
+	 * @param channelSelector
+	 * @param flushAlways
+	 */
 	public RecordWriter(ResultPartitionWriter writer, ChannelSelector<T> channelSelector, boolean flushAlways) {
 		this.flushAlways = flushAlways;
 		this.targetPartition = writer;
@@ -92,7 +114,9 @@ public class RecordWriter<T extends IOReadableWritable> {
 		 * (see {@link ChannelSelector}). Every channel has an independent
 		 * serializer.
 		 */
+		//序列化器，用于将一条记录序列化到多个buffer中
 		this.serializers = new SpanningRecordSerializer[numChannels];
+
 		this.bufferBuilders = new Optional[numChannels];
 		for (int i = 0; i < numChannels; i++) {
 			serializers[i] = new SpanningRecordSerializer<T>();

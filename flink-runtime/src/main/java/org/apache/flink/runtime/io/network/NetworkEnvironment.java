@@ -52,8 +52,9 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  */
 
 /**
- * Task 启动的时候会向 NetworkEnvironment 进行注册，这里会为每一个 ResultPartition 分配 LocalBufferPool:
+ * Task 启动的时候会向 NetworkEnvironment 进行注册，这里会为每一个 ResultPartition 分配 LocalBufferPool；
  * 看代码这个对象好像是每个tm一个，
+ * 对，每个tm一个，每个tm上会跑多个Task(通过SlotSharingGroup机制)； 所有会有 registerTask 的步骤；
  */
 public class NetworkEnvironment {
 
@@ -198,7 +199,7 @@ public class NetworkEnvironment {
 			}
 
 			for (final ResultPartition partition : producedPartitions) {
-				setupPartition(partition);  //这里，输出
+				setupPartition(partition);  //这里，为输出设置资源；
 			}
 
 			// Setup the buffer pool for each buffer reader
@@ -209,12 +210,13 @@ public class NetworkEnvironment {
 		}
 	}
 
+	//每一个Task都对应一个ResultPartition，代表这个Task的输出；	需要为这个ResultPartition设置buffer资源；
 	@VisibleForTesting
 	public void setupPartition(ResultPartition partition) throws IOException {
 		BufferPool bufferPool = null;
 
 		try {
-			//请求的MemorySegment大小：如果PartitionType 是 unbounded，则不限制buffer pool 的最大大小，否则为 sub-partition * taskmanager.network.memory.buffers-per-channel
+			//请求的MemorySegment大小：如果PartitionType 是 unbounded，则不限制 buffer pool 的最大大小，否则为 sub-partition * taskmanager.network.memory.buffers-per-channel
 			int maxNumberOfMemorySegments = partition.getPartitionType().isBounded() ?
 				partition.getNumberOfSubpartitions() * networkBuffersPerChannel +
 					extraNetworkBuffersPerGate : Integer.MAX_VALUE;
@@ -244,6 +246,7 @@ public class NetworkEnvironment {
 		taskEventDispatcher.registerPartition(partition.getPartitionId());
 	}
 
+	//每一个Task都对应一个InputGate，代表这个Task的输出； 也需要为这个InputGate设置buffer资源
 	@VisibleForTesting
 	public void setupInputGate(SingleInputGate gate) throws IOException {
 		BufferPool bufferPool = null;
