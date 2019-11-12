@@ -86,6 +86,8 @@ import static org.apache.flink.util.Preconditions.checkState;
  *  3. task启动，创建一个RecordWriter，然后开始调用emit方法往下游发送数据，
  *  	3.1 通过 ChannelSelector 确定写入的目标 channel
  * 		3.2 找到目标channel对应的序列化器，使用 RecordSerializer 对记录进行序列化
+ * 		3.3 向 ResultPartition 请求 BufferBuilder，用于写入序列化结果
+ * 		3.4 向 ResultPartition 添加 BufferConsumer，用于读取写入 Buffer , 写完就读取？ 什么意思？ 这里可以理解为就是把一个可以读取的buffer给了 sub-partition，忽略consumer这个概念；
  *
  *
  * ExecutionGraph 中的 ExecutionVertex 对应最终的 Task； 这个好理解；
@@ -100,6 +102,8 @@ import static org.apache.flink.util.Preconditions.checkState;
  *
  * 每一个 ResultPartition 都有一个关联的 ResultPartitionWriter; 也都有一个独立的 LocalBufferPool 负责提供写入数据所需的 buffer
  * ResultPartition 实现了 ResultPartitionWriter 接口；
+ *
+ * ResultPartition 中包含所有的 ResultSubPartition，ResultPartition 创建的时候就顺便创建了这个ResultPartition包含的所有的ResultSubPartition；
  */
 public class ResultPartition implements ResultPartitionWriter, BufferPoolOwner {
 
@@ -167,7 +171,7 @@ public class ResultPartition implements ResultPartitionWriter, BufferPoolOwner {
 		ResultPartitionManager partitionManager,
 		ResultPartitionConsumableNotifier partitionConsumableNotifier,
 		IOManager ioManager,
-		boolean sendScheduleOrUpdateConsumersMessage) {
+		boolean sendScheduleOrUpdateConsumersMessage) { //在有数据产出时，是否需要发送消息来调度或更新消费者（Stream模式下调度模式为 ScheduleMode.EAGER，无需发通知）
 
 		this.owningTaskName = checkNotNull(owningTaskName);
 		this.taskActions = checkNotNull(taskActions);
@@ -277,22 +281,26 @@ public class ResultPartition implements ResultPartitionWriter, BufferPoolOwner {
 
 	// ------------------------------------------------------------------------
 
+	//被RecordWriter调用，把一个bufferConsumer(用于读取写入到 MemorySegment 的数据) 交给对应的 sub-partition，
+	//其实也就相当于把一个完整的，可以读取buffer交给了 sub-partition，
 	@Override
 	public void addBufferConsumer(BufferConsumer bufferConsumer, int subpartitionIndex) throws IOException {
+		//向指定的 subpartition 添加一个 buffer
 		checkNotNull(bufferConsumer);
 
 		ResultSubpartition subpartition;
 		try {
 			checkInProduceState();
-			subpartition = subpartitions[subpartitionIndex];
+			subpartition = subpartitions[subpartitionIndex];  //这里也印证了 sub-partition 和 channel 一一对应
 		}
 		catch (Exception ex) {
 			bufferConsumer.close();
 			throw ex;
 		}
 
-		if (subpartition.add(bufferConsumer)) {
-			notifyPipelinedConsumers();
+		//添加 BufferConsumer，说明已经有数据生成了
+		if (subpartition.add(bufferConsumer)) {  //交给 sub-partition，
+			notifyPipelinedConsumers();  //这里，然后通知 pipline 模式下的下游消费者
 		}
 	}
 
@@ -374,6 +382,7 @@ public class ResultPartition implements ResultPartitionWriter, BufferPoolOwner {
 	/**
 	 * Returns the requested subpartition.
 	 */
+	//创建某个sub-partition的 SubpartitionView，用来消费数据；
 	public ResultSubpartitionView createSubpartitionView(int index, BufferAvailabilityListener availabilityListener) throws IOException {
 		int refCnt = pendingReferences.get();
 
@@ -382,7 +391,7 @@ public class ResultPartition implements ResultPartitionWriter, BufferPoolOwner {
 
 		checkElementIndex(index, subpartitions.length, "Subpartition not found.");
 
-		ResultSubpartitionView readView = subpartitions[index].createReadView(availabilityListener);
+		ResultSubpartitionView readView = subpartitions[index].createReadView(availabilityListener);  //靠，最终还是调用到 sub-partition 自己的 createReadView 方法；
 
 		LOG.debug("Created {}", readView);
 
@@ -484,7 +493,10 @@ public class ResultPartition implements ResultPartitionWriter, BufferPoolOwner {
 	 * Notifies pipelined consumers of this result partition once.
 	 */
 	private void notifyPipelinedConsumers() {
+		//对于 Streaming 模式的任务，由于调度模式为 EAGER，所有的 task 都已经部署了，下面的通知不会触发
 		if (sendScheduleOrUpdateConsumersMessage && !hasNotifiedPipelinedConsumers && partitionType.isPipelined()) {
+			//对于 PIPELINE 类型的 ResultPartition，在第一条记录产生时，
+			//会告知 JobMaster 当前 ResultPartition 可被消费，这会触发下游消费者 Task 的部署
 			partitionConsumableNotifier.notifyPartitionConsumable(jobId, partitionId, taskActions);
 
 			hasNotifiedPipelinedConsumers = true;

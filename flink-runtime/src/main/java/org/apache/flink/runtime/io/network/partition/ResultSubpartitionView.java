@@ -27,6 +27,12 @@ import java.io.IOException;
 /**
  * A view to consume a {@link ResultSubpartition} instance.
  */
+
+/**
+ * 写入的 Buffer 最终被保存在 ResultSubpartition 中维护的一个队列中，如果需要消费这些 Buffer，就需要依赖 ResultSubpartitionView。
+ * 当需要消费一个 ResultSubpartition 的结果时，需要创建一个 ResultSubpartitionView 对象，
+ * 并关联到 ResultSubpartition 中；当数据可以被消费时，会通过对应的回调接口告知 ResultSubpartitionView：
+ */
 public interface ResultSubpartitionView {
 
 	/**
@@ -43,10 +49,12 @@ public interface ResultSubpartitionView {
 	@Nullable
 	BufferAndBacklog getNextBuffer() throws IOException, InterruptedException;
 
+	//通知 ResultSubpartition 的数据可供消费
 	void notifyDataAvailable();
 
 	void releaseAllResources() throws IOException;
 
+	//已经完成对 ResultSubpartition 的消费
 	void notifySubpartitionConsumed() throws IOException;
 
 	boolean isReleased();

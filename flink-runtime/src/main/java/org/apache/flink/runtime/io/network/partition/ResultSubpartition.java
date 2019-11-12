@@ -32,24 +32,38 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
 /**
  * A single subpartition of a {@link ResultPartition} instance.
  */
+
+/**
+ * ResultSubpartition 和 InputChannel 一一对应；
+ * sub-partition 中有一个队列，用来缓存上游算子发送过来的buffer；
+ *
+ * 大致流程：
+ * Task 通过 RecordWriter # emit 来往下游发送数据，中间经过找channel、序列化等步骤，把数据给到ResultPartition，RP最终把数据(buffer) 交给 sub-partition， sub-partition#add
+ * sub-partition 放到自己的 buffers 队列中；
+ */
 public abstract class ResultSubpartition {
 
 	/** The index of the subpartition at the parent partition. */
+	//在ResultPartition中的index索引
 	protected final int index;
 
 	/** The parent partition this subpartition belongs to. */
+	//属于哪个ResultPartition
 	protected final ResultPartition parent;
 
 	/** All buffers of this subpartition. Access to the buffers is synchronized on this object. */
+	//当前 sub-partition 堆积的所有的 Buffer 的队列
 	protected final ArrayDeque<BufferConsumer> buffers = new ArrayDeque<>();
 
 	/** The number of non-event buffers currently in this subpartition */
+	//当前 subpartiion 中堆积的 buffer 的数量
 	@GuardedBy("buffers")
 	private int buffersInBacklog;
 
 	// - Statistics ----------------------------------------------------------
 
 	/** The total number of buffers (both data and event buffers) */
+	//buffer和event的总数据量；
 	private long totalNumberOfBuffers;
 
 	/** The total number of bytes (both data and event buffers) */

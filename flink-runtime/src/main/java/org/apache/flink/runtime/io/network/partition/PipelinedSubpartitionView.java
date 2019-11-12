@@ -28,12 +28,17 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /**
  * View over a pipelined in-memory only subpartition.
+ * 只能消费 ResultPartitionType为pipline 类型的 sub-partition 的 view (视图？)
  */
+
+//简单来说就是用来消费一个 sub-partition 中的数据的；
 class PipelinedSubpartitionView implements ResultSubpartitionView {
 
 	/** The subpartition this view belongs to. */
+	//具体要消费哪个 sub-partition
 	private final PipelinedSubpartition parent;
 
+	//监听器，监听数据是否可用； 数据可用时，会回调它
 	private final BufferAvailabilityListener availabilityListener;
 
 	/** Flag indicating whether this view has been released. */
@@ -53,6 +58,7 @@ class PipelinedSubpartitionView implements ResultSubpartitionView {
 
 	@Override
 	public void notifyDataAvailable() {
+		//回调接口
 		availabilityListener.notifyDataAvailable();
 	}
 

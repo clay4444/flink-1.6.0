@@ -37,13 +37,23 @@ import static org.apache.flink.util.Preconditions.checkState;
 /**
  * A pipelined in-memory only subpartition, which can be consumed once.
  */
+
+/**
+ * 根据 ResultPartitionType 的不同，ResultSubpartition 的实现类也不同。对于 Streaming 模式，使用的是 PipelinedSubpartition；
+ */
 class PipelinedSubpartition extends ResultSubpartition {
 
 	private static final Logger LOG = LoggerFactory.getLogger(PipelinedSubpartition.class);
 
 	// ------------------------------------------------------------------------
 
+	/**
+	 * 写入的 Buffer 最终被保存在 ResultSubpartition 中维护的一个队列中，如果需要消费这些 Buffer，就需要依赖 ResultSubpartitionView。
+	 * 当需要消费一个 ResultSubpartition 的结果时，需要创建一个 ResultSubpartitionView 对象，
+	 * 并关联到 ResultSubpartition 中；当数据可以被消费时，会通过对应的回调接口告知 ResultSubpartitionView：
+	 */
 	/** The read view to consume this subpartition. */
+	//用于消费写入的 Buffer，  用它来进行消费！！？？
 	private PipelinedSubpartitionView readView;
 
 	/** Flag indicating whether the subpartition has been finished. */
@@ -57,10 +67,12 @@ class PipelinedSubpartition extends ResultSubpartition {
 
 	// ------------------------------------------------------------------------
 
+	//index 是当前 sub-partition 的索引；parent 是当前 sub-partition 所属的 ResultPartition
 	PipelinedSubpartition(int index, ResultPartition parent) {
 		super(index, parent);
 	}
 
+	//Task -> RecordWriter#emit -> RP -> RS(this) -> 当前add方法；
 	@Override
 	public boolean add(BufferConsumer bufferConsumer) {
 		return add(bufferConsumer, false);
@@ -69,11 +81,11 @@ class PipelinedSubpartition extends ResultSubpartition {
 	@Override
 	public void flush() {
 		synchronized (buffers) {
-			if (buffers.isEmpty()) {
+			if (buffers.isEmpty()) { //buffer 为空，直接返回
 				return;
 			}
 			flushRequested = !buffers.isEmpty();
-			notifyDataAvailable();
+			notifyDataAvailable();  //通知
 		}
 	}
 
@@ -83,6 +95,8 @@ class PipelinedSubpartition extends ResultSubpartition {
 		LOG.debug("Finished {}.", this);
 	}
 
+	//添加一个新的BufferConsumer
+	//这个参数里的 finish 指的是整个 subpartition 都完成了
 	private boolean add(BufferConsumer bufferConsumer, boolean finish) {
 		checkNotNull(bufferConsumer);
 
@@ -93,8 +107,10 @@ class PipelinedSubpartition extends ResultSubpartition {
 			}
 
 			// Add the bufferConsumer and update the stats
-			buffers.add(bufferConsumer);
+			buffers.add(bufferConsumer);  	//加入到已接收的数据队列中；
 			updateStatistics(bufferConsumer);
+
+			//更新 backlog 的数量，只有 buffer 才会使得 buffersInBacklog + 1，事件不会增加 buffersInBacklog
 			increaseBuffersInBacklog(bufferConsumer);
 
 			if (finish) {
@@ -102,6 +118,7 @@ class PipelinedSubpartition extends ResultSubpartition {
 				flush();
 			}
 			else {
+				//通知数据可以被消费
 				maybeNotifyDataAvailable();
 			}
 		}
@@ -216,6 +233,7 @@ class PipelinedSubpartition extends ResultSubpartition {
 		return isReleased;
 	}
 
+	//创建消费者
 	@Override
 	public PipelinedSubpartitionView createReadView(BufferAvailabilityListener availabilityListener) throws IOException {
 		synchronized (buffers) {
@@ -278,13 +296,15 @@ class PipelinedSubpartition extends ResultSubpartition {
 		return Math.max(buffers.size(), 0);
 	}
 
+	//只在第一个 buffer 为 finish 的时候才通知
 	private void maybeNotifyDataAvailable() {
 		// Notify only when we added first finished buffer.
-		if (getNumberOfFinishedBuffers() == 1) {
+		if (getNumberOfFinishedBuffers() == 1) { 	//只在产生第一个buffer时，进行通知
 			notifyDataAvailable();
 		}
 	}
 
+	//通知readView，有数据可用了
 	private void notifyDataAvailable() {
 		if (readView != null) {
 			readView.notifyDataAvailable();

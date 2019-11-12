@@ -27,6 +27,7 @@ import org.apache.flink.runtime.io.network.api.serialization.RecordSerializer;
 import org.apache.flink.runtime.io.network.api.serialization.SpanningRecordSerializer;
 import org.apache.flink.runtime.io.network.buffer.BufferBuilder;
 import org.apache.flink.runtime.io.network.buffer.BufferConsumer;
+import org.apache.flink.runtime.io.network.partition.ResultPartition;
 import org.apache.flink.runtime.metrics.groups.TaskIOMetricGroup;
 import org.apache.flink.util.XORShiftRandom;
 
@@ -59,7 +60,7 @@ import static org.apache.flink.util.Preconditions.checkState;
  * 1. 通过 ChannelSelector 确定写入的目标 channel
  * 2. 使用 RecordSerializer 对记录进行序列化
  * 3. 向 ResultPartition 请求 BufferBuilder，用于写入序列化结果
- * 4. 向 ResultPartition 添加 BufferConsumer，用于读取写入 Buffer 的数据
+ * 4. 向 ResultPartition 添加 BufferConsumer，用于读取写入 Buffer , 写完就读取？ 什么意思？ 这里可以理解为就是把一个可以读取的buffer给了 sub-partition，忽略consumer这个概念；
  */
 public class RecordWriter<T extends IOReadableWritable> {
 
@@ -170,6 +171,7 @@ public class RecordWriter<T extends IOReadableWritable> {
 				}
 			}
 			//当前这条记录没有写完，申请新的 buffer 写入
+			//第三步：向 ResultPartition 请求 BufferBuilder，用于写入序列化结果
 			BufferBuilder bufferBuilder = requestNewBufferBuilder(targetChannel);
 
 			result = serializer.continueWritingWithNextBufferBuilder(bufferBuilder);
@@ -244,7 +246,8 @@ public class RecordWriter<T extends IOReadableWritable> {
 		BufferBuilder bufferBuilder = targetPartition.getBufferProvider().requestBufferBuilderBlocking();
 		bufferBuilders[targetChannel] = Optional.of(bufferBuilder);
 
-		//添加一个BufferConsumer，用于读取写入到 MemorySegment 的数据
+		//添加一个BufferConsumer，用于读取写morySegment 的数据，ResultPartition 会将其转交给对应的 ResultSubPartition:
+		//第四步：向 ResultPartition 添加 BufferConsumer，用于读取写入 Buffer 的数据
 		targetPartition.addBufferConsumer(bufferBuilder.createBufferConsumer(), targetChannel);
 		return bufferBuilder;
 	}

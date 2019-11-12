@@ -37,19 +37,19 @@ import static org.apache.flink.util.Preconditions.checkState;
  * The result partition manager keeps track of all currently produced/consumed partitions of a
  * task manager.
  *
- * 管理一个tm的所有 ResultPartition
+ * 管理一个 tm 上的所有 ResultPartition
  */
 public class ResultPartitionManager implements ResultPartitionProvider {
 
 	private static final Logger LOG = LoggerFactory.getLogger(ResultPartitionManager.class);
 
-	//放在这个table里
+	//管理所有的 ResultPartition，使用的时 Guava 提供的支持多级映射的哈希表
 	public final Table<ExecutionAttemptID, IntermediateResultPartitionID, ResultPartition>
 			registeredPartitions = HashBasedTable.create();
 
 	private boolean isShutdown;
 
-	//注册一个当前tm上的 ResultPartition
+	//一个 Task 在向 NetworkEnvironment 注册的时候就会逐一注册所有的ResultPartition
 	public void registerResultPartition(ResultPartition partition) throws IOException {
 		synchronized (registeredPartitions) {
 			checkState(!isShutdown, "Result partition manager already shut down.");
@@ -67,14 +67,16 @@ public class ResultPartitionManager implements ResultPartitionProvider {
 		}
 	}
 
+	//在指定的 ResultSubpartition 中创建一个 ResultSubpartitionView，用于消费数据
 	@Override
 	public ResultSubpartitionView createSubpartitionView(
-			ResultPartitionID partitionId,
-			int subpartitionIndex,
-			BufferAvailabilityListener availabilityListener) throws IOException {
+			ResultPartitionID partitionId,  //RP id
+			int subpartitionIndex,      //RS  index
+			BufferAvailabilityListener availabilityListener)  //监听数据是否可用的监听器
+		throws IOException {
 
 		synchronized (registeredPartitions) {
-			final ResultPartition partition = registeredPartitions.get(partitionId.getProducerId(),
+			final ResultPartition partition = registeredPartitions.get(partitionId.getProducerId(),   //先通过 RP id 找到具体的 ResultPartition；
 					partitionId.getPartitionId());
 
 			if (partition == null) {
@@ -83,7 +85,7 @@ public class ResultPartitionManager implements ResultPartitionProvider {
 
 			LOG.debug("Requesting subpartition {} of {}.", subpartitionIndex, partition);
 
-			return partition.createSubpartitionView(subpartitionIndex, availabilityListener);
+			return partition.createSubpartitionView(subpartitionIndex, availabilityListener); //最终还是通过ResultPartition来创建具体的SubpartitionView，来消费具体sub-partition的数据
 		}
 	}
 
