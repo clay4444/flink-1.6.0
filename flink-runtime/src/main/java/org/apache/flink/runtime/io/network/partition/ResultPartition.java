@@ -82,13 +82,19 @@ import static org.apache.flink.util.Preconditions.checkState;
  *  这里涉及的流程：
  *  1. tm启动时创建一个 NetworkEnvironment，并调用start()方法来启动，用来管理这个tm上的所有网络资源环境；
  *  2. Task启动前，向所在tm上的 NetworkEnvironment#registerTask 来注册当前task，NetworkEnvironment会回调这个task的ResultPartition的registerBufferPool方法，来为ResultPartition(代表这个task的输出)设置输出数据需要的资源；
+ *		2.1 这里还会把Task的所有ResultPartition都注册到resultPartitionManager中，所以resultPartitionManager管理这个tm上的所有 ResultPartition(一个Task一个，所以可能会有多个)
+ *
  *  上面已经设置好了资源，那task要怎么往后发送数据呢？
  *  3. task启动，创建一个RecordWriter，然后开始调用emit方法往下游发送数据，
  *  	3.1 通过 ChannelSelector 确定写入的目标 channel
  * 		3.2 找到目标channel对应的序列化器，使用 RecordSerializer 对记录进行序列化
  * 		3.3 向 ResultPartition 请求 BufferBuilder，用于写入序列化结果
  * 		3.4 向 ResultPartition 添加 BufferConsumer，用于读取写入 Buffer , 写完就读取？ 什么意思？ 这里可以理解为就是把一个可以读取的buffer给了 sub-partition，忽略consumer这个概念；
+ *	4. 调用subpartition#add把数据加到本身的buffer队列中，然后通知 PipelinedSubpartitionView 数据产生，可以被消费了(只有第一个buffer会通知)
+ *  5. 那么这个 SubpartitionView 是什么时候，怎么产生的呢？是由 resultPartitionManager#createSubpartitionView 创建的(并和对应的sub-partition关联)，创建的时候传入一个监听器，当对应的sub-partition产生数据通知的时候，回调这个监听器的方法；
  *
+ *  至此，我们已经了解了一个 Task 如何输出结果到 ResultPartition 中，以及如何去消费不同 ResultSubpartition 中的这些用于保存序列化结果的 Buffer。
+ *  ======================= Task的输出 =======================
  *
  * ExecutionGraph 中的 ExecutionVertex 对应最终的 Task； 这个好理解；
  * ExecutionGraph 中的 IntermediateResultPartition(代表最终的一个Task的具体输出)，对应实际执行图中的 ResultPartition(代表一个Task的具体输出)

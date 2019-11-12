@@ -53,7 +53,7 @@ class PipelinedSubpartition extends ResultSubpartition {
 	 * 并关联到 ResultSubpartition 中；当数据可以被消费时，会通过对应的回调接口告知 ResultSubpartitionView：
 	 */
 	/** The read view to consume this subpartition. */
-	//用于消费写入的 Buffer，  用它来进行消费！！？？
+	//用于消费写入的 Buffer，  用它来进行消费！！？？不是InputChannel吗？  现在只看到了数据产生到sub-partition后，通知是通过SubpartitionView来做的(监听器)；
 	private PipelinedSubpartitionView readView;
 
 	/** Flag indicating whether the subpartition has been finished. */
@@ -233,7 +233,7 @@ class PipelinedSubpartition extends ResultSubpartition {
 		return isReleased;
 	}
 
-	//创建消费者
+	//创建消费者  ResultPartitionManager#createSubpartitionView 最终调用到这里；
 	@Override
 	public PipelinedSubpartitionView createReadView(BufferAvailabilityListener availabilityListener) throws IOException {
 		synchronized (buffers) {
@@ -244,7 +244,7 @@ class PipelinedSubpartition extends ResultSubpartition {
 
 			LOG.debug("Creating read view for subpartition {} of partition {}.", index, parent.getPartitionId());
 
-			readView = new PipelinedSubpartitionView(this, availabilityListener);
+			readView = new PipelinedSubpartitionView(this, availabilityListener); 	//最终还是由当前这个PipelinedSubpartition来创建的；
 			if (!buffers.isEmpty()) {
 				notifyDataAvailable();
 			}
