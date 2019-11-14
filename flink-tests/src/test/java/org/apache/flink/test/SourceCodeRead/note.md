@@ -15,7 +15,7 @@
 3. jobMaster (JobManagerRunner)
 
 
-### 资源的管理
+### 资源的管理 (slot)
 
 #### tm 中 slot的管理
 

@@ -65,24 +65,41 @@ import java.util.Optional;
  * will have an input gate attached to it. This will provide its input, which will consist of one
  * subpartition from each partition of the intermediate result.
  */
+
+/**
+ * ======================= Task的输入 =======================
+ * 这里的主要流程：
+ * 核心主要是Task通过循环调用 InputGate.getNextBufferOrEvent 方法获取输入数据，并将获取的数据交给它所封装的算子进行处理，这样就构成了一个Task的基本运行逻辑；
+ * getNextBufferOrEvent的流程： (对SingleInputGate来说)
+ * 	1. requestPartitions(一次性)：首先让每个 inputChannel 去关联对应的sub-partition， 这涉及到 channel 和 ResultPartitionView 的关联，需要后续再看
+ * 	2.
+ *
+ * ======================= Task的输出 =======================
+ *
+ * Task 的输入被抽象为 InputGate, 而 InputGate 则由 InputChannel 组成， InputChannel 和该 Task 需要消费的 ResultSubpartition 是一一对应的。
+ * Task 通过循环调用 InputGate.getNextBufferOrEvent 方法获取输入数据，并将获取的数据交给它所封装的算子进行处理，这构成了一个 Task 的基本运行逻辑。
+ * InputGate 有两个具体的实现，分别为 SingleInputGate 和 UnionInputGate, UnionInputGate 有多个 SingleInputGate 联合构成;
+ */
 public interface InputGate {
 
 	int getNumberOfInputChannels();
 
 	boolean isFinished();
 
+	//请求消费 ResultPartition
 	void requestPartitions() throws IOException, InterruptedException;
 
 	/**
 	 * Blocking call waiting for next {@link BufferOrEvent}.
-	 *
+	 * 阻塞调用 获取下一个Buffer或事件
 	 * @return {@code Optional.empty()} if {@link #isFinished()} returns true.
 	 */
+	//Task 通过循环调用 InputGate.getNextBufferOrEvent 方法获取输入数据，并将获取的数据交给它所封装的算子进行处理，这构成了一个 Task 的基本运行逻辑。
 	Optional<BufferOrEvent> getNextBufferOrEvent() throws IOException, InterruptedException;
 
 	/**
 	 * Poll the {@link BufferOrEvent}.
-	 *
+	 * 非阻塞调用 获取下一个Buffer或事件
 	 * @return {@code Optional.empty()} if there is no data to return or if {@link #isFinished()} returns true.
 	 */
 	Optional<BufferOrEvent> pollNextBufferOrEvent() throws IOException, InterruptedException;

@@ -120,7 +120,7 @@ public class SingleInputGate implements InputGate {
 	private final IntermediateDataSetID consumedResultId;
 
 	/** The type of the partition the input gate is consuming. */
-	private final ResultPartitionType consumedPartitionType;
+	private final ResultPartitionType consumedPartitionType;   // ResultPartitionType      blocking / pipline ?
 
 	/**
 	 * The index of the consumed subpartition of each consumed partition. This index depends on the
@@ -129,15 +129,17 @@ public class SingleInputGate implements InputGate {
 	private final int consumedSubpartitionIndex;
 
 	/** The number of input channels (equivalent to the number of consumed partitions). */
-	private final int numberOfInputChannels;
+	private final int numberOfInputChannels;   //inputChannel的个数
 
 	/**
 	 * Input channels. There is a one input channel for each consumed intermediate result partition.
 	 * We store this in a map for runtime updates of single channels.
 	 */
+	//该 InputGate 包含的所有 InputChannel
 	private final Map<IntermediateResultPartitionID, InputChannel> inputChannels;
 
 	/** Channels, which notified this input gate about available data. */
+	//InputChannel 构成的队列，这些 InputChannel 中都有可供消费的数据
 	private final ArrayDeque<InputChannel> inputChannelsWithData = new ArrayDeque<>();
 
 	/**
@@ -155,9 +157,11 @@ public class SingleInputGate implements InputGate {
 	 * Buffer pool for incoming buffers. Incoming data from remote channels is copied to buffers
 	 * from this pool.
 	 */
+	//用于接收输入的缓冲池
 	private BufferPool bufferPool;
 
 	/** Global network buffer pool to request and recycle exclusive buffers (only for credit-based). */
+	//全局网络缓冲池
 	private NetworkBufferPool networkBufferPool;
 
 	private final boolean isCreditBased;
@@ -469,10 +473,11 @@ public class SingleInputGate implements InputGate {
 		return true;
 	}
 
+	//请求分区
 	@Override
 	public void requestPartitions() throws IOException, InterruptedException {
 		synchronized (requestLock) {
-			if (!requestedPartitionsFlag) {
+			if (!requestedPartitionsFlag) {  //只请求一次
 				if (isReleased) {
 					throw new IllegalStateException("Already released.");
 				}
@@ -484,12 +489,13 @@ public class SingleInputGate implements InputGate {
 							"channels.");
 				}
 
-				for (InputChannel inputChannel : inputChannels.values()) {
-					inputChannel.requestSubpartition(consumedSubpartitionIndex);
+				for (InputChannel inputChannel : inputChannels.values()) { //先拿到所有的inputChannel
+					//每一个channel都请求对应的子分区
+					inputChannel.requestSubpartition(consumedSubpartitionIndex); //所以让每一个channel去请求对应的 sub-partition，  具体实现需要后面再看
 				}
 			}
 
-			requestedPartitionsFlag = true;
+			requestedPartitionsFlag = true;  //已经请求过了，
 		}
 	}
 
@@ -497,16 +503,19 @@ public class SingleInputGate implements InputGate {
 	// Consume
 	// ------------------------------------------------------------------------
 
+	//阻塞调用获取下一个输入
 	@Override
 	public Optional<BufferOrEvent> getNextBufferOrEvent() throws IOException, InterruptedException {
 		return getNextBufferOrEvent(true);
 	}
 
+	//非阻塞调用下一个输入
 	@Override
 	public Optional<BufferOrEvent> pollNextBufferOrEvent() throws IOException, InterruptedException {
 		return getNextBufferOrEvent(false);
 	}
 
+	//阻塞和非阻塞都是调用的这个；
 	private Optional<BufferOrEvent> getNextBufferOrEvent(boolean blocking) throws IOException, InterruptedException {
 		if (hasReceivedAllEndOfPartitionEvents) {
 			return Optional.empty();
@@ -516,6 +525,7 @@ public class SingleInputGate implements InputGate {
 			throw new IllegalStateException("Released");
 		}
 
+		//首先尝试请求分区，实际的请求只会执行一次
 		requestPartitions();
 
 		InputChannel currentChannel;
@@ -523,27 +533,30 @@ public class SingleInputGate implements InputGate {
 		Optional<BufferAndAvailability> result = Optional.empty();
 
 		do {
-			synchronized (inputChannelsWithData) {
-				while (inputChannelsWithData.size() == 0) {
+			synchronized (inputChannelsWithData) {  //以这个只包含所有有数据的channel的队列为锁，(回想生产者-消费者模型)
+
+				//从 inputChannelsWithData 队列中获取有数据的 channel，经典的生产者-消费者模式;   inputChannelsWithData是所有inputChannel组成的队列；
+				while (inputChannelsWithData.size() == 0) {  //说明所有的channel都没有新数据； 也就是说 inputChannelsWithData 中包含的是所有有数据可供消费的inputChannel
 					if (isReleased) {
 						throw new IllegalStateException("Released");
 					}
 
 					if (blocking) {
-						inputChannelsWithData.wait();
+						inputChannelsWithData.wait();  // wait()  阻塞等待
 					}
 					else {
 						return Optional.empty();
 					}
 				}
+				//出了上面的while循环，说明有一个inputChannel有数据了；
 
-				currentChannel = inputChannelsWithData.remove();
+				currentChannel = inputChannelsWithData.remove(); //从inputChannelsWithData中移除，赋给 currentChannel
 				enqueuedInputChannelsWithData.clear(currentChannel.getChannelIndex());
-				moreAvailable = inputChannelsWithData.size() > 0;
+				moreAvailable = inputChannelsWithData.size() > 0; //是否还有其他inputChannel有数据可消费；
 			}
 
-			result = currentChannel.getNextBuffer();
-		} while (!result.isPresent());
+			result = currentChannel.getNextBuffer(); //一直
+		} while (!result.isPresent());  //result没值，就一直在这循环获取
 
 		// this channel was now removed from the non-empty channels queue
 		// we re-add it in case it has more data, because in that case no "non-empty" notification
@@ -629,7 +642,7 @@ public class SingleInputGate implements InputGate {
 			enqueuedInputChannelsWithData.set(channel.getChannelIndex());
 
 			if (availableChannels == 0) {
-				inputChannelsWithData.notifyAll();
+				inputChannelsWithData.notifyAll(); //在这进行的notifyAll
 			}
 		}
 
