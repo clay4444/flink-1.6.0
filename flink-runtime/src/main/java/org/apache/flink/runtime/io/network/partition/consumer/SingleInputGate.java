@@ -146,7 +146,8 @@ public class SingleInputGate implements InputGate {
 	 * Field guaranteeing uniqueness for inputChannelsWithData queue. Both of those fields should be unified
 	 * onto one.
 	 */
-	private final BitSet enqueuedInputChannelsWithData;
+	//保证 inputChannelsWithData 队列唯一性的字段,这两个字段保存的数据应该保持一致。 可以用来快速辅助判断一个channel是否在 inputChannelsWithData 队列中；  值得借鉴！！！
+	private final BitSet enqueuedInputChannelsWithData; //可以理解为一个map，key是 channel index，value是 boolean(标记这个channel当前是否有数据)
 
 	private final BitSet channelsWithEndOfPartitionEvents;
 
@@ -515,7 +516,10 @@ public class SingleInputGate implements InputGate {
 		return getNextBufferOrEvent(false);
 	}
 
-	//阻塞和非阻塞都是调用的这个；
+	/**
+	 * 阻塞和非阻塞都是调用的这个；
+	 * 
+	 */
 	private Optional<BufferOrEvent> getNextBufferOrEvent(boolean blocking) throws IOException, InterruptedException {
 		if (hasReceivedAllEndOfPartitionEvents) {
 			return Optional.empty();
@@ -550,19 +554,19 @@ public class SingleInputGate implements InputGate {
 				}
 				//出了上面的while循环，说明有一个inputChannel有数据了；
 
-				currentChannel = inputChannelsWithData.remove(); //从inputChannelsWithData中移除，赋给 currentChannel
+				currentChannel = inputChannelsWithData.remove(); //从inputChannelsWithData中移除(假设只有一条数据)，赋给 currentChannel
 				enqueuedInputChannelsWithData.clear(currentChannel.getChannelIndex());
 				moreAvailable = inputChannelsWithData.size() > 0; //是否还有其他inputChannel有数据可消费；
 			}
 
-			result = currentChannel.getNextBuffer(); //一直
+			result = currentChannel.getNextBuffer(); //获取一个buffer
 		} while (!result.isPresent());  //result没值，就一直在这循环获取
 
 		// this channel was now removed from the non-empty channels queue
 		// we re-add it in case it has more data, because in that case no "non-empty" notification
 		// will come for that channel
-		if (result.get().moreAvailable()) {
-			queueChannel(currentChannel);
+		if (result.get().moreAvailable()) { //如果上一个channel有不止一条数据的话，
+			queueChannel(currentChannel);	//就把它加回 inputChannelsWithData 队列中，以便下次继续消费
 			moreAvailable = true;
 		}
 
@@ -612,6 +616,7 @@ public class SingleInputGate implements InputGate {
 	// Channel notifications
 	// ------------------------------------------------------------------------
 
+	//监控InputGate是否有数据的监听器
 	@Override
 	public void registerListener(InputGateListener inputGateListener) {
 		if (this.inputGateListener == null) {
@@ -629,27 +634,31 @@ public class SingleInputGate implements InputGate {
 		taskActions.triggerPartitionProducerStateCheck(jobId, consumedResultId, partitionId);
 	}
 
+	//把一个有数据的channel加入 inputChannelsWithData 队列中；
 	private void queueChannel(InputChannel channel) {
 		int availableChannels;
 
-		synchronized (inputChannelsWithData) {
-			if (enqueuedInputChannelsWithData.get(channel.getChannelIndex())) {
+		synchronized (inputChannelsWithData) { //也用  inputChannelsWithData 为锁
+			if (enqueuedInputChannelsWithData.get(channel.getChannelIndex())) { //已经在队列中了，直接返回
 				return;
 			}
-			availableChannels = inputChannelsWithData.size();
 
-			inputChannelsWithData.add(channel);
-			enqueuedInputChannelsWithData.set(channel.getChannelIndex());
+			//否则，加入队列；
 
-			if (availableChannels == 0) {
-				inputChannelsWithData.notifyAll(); //在这进行的notifyAll
+			availableChannels = inputChannelsWithData.size(); //注意这里是加入队列之前获取的
+
+			inputChannelsWithData.add(channel);  //入队
+			enqueuedInputChannelsWithData.set(channel.getChannelIndex());  //标记对应channel已在队列中
+
+			if (availableChannels == 0) {  //为什么=0的时候notify呢？  因为availableChannels是新channel进队列之前取的，也就是说之前没有channel有数据，所以消费者阻塞了，现在有数据了，需要唤醒
+				inputChannelsWithData.notifyAll(); //在这进行的 notifyAll 唤醒；
 			}
 		}
 
 		if (availableChannels == 0) {
 			InputGateListener listener = inputGateListener;
 			if (listener != null) {
-				listener.notifyInputGateNonEmpty(this);
+				listener.notifyInputGateNonEmpty(this); //通知InputGate监听器有数据可以消费了
 			}
 		}
 	}
