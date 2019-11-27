@@ -119,7 +119,7 @@ class PipelinedSubpartition extends ResultSubpartition {
 			}
 			else {
 				//通知数据可以被消费
-				maybeNotifyDataAvailable();
+				maybeNotifyDataAvailable(); //这里
 			}
 		}
 
