@@ -70,15 +70,31 @@ import java.util.Optional;
  * ======================= Task的输入 =======================
  * 这里的主要流程：
  * 核心主要是Task通过循环调用 InputGate.getNextBufferOrEvent 方法获取输入数据，并将获取的数据交给它所封装的算子进行处理，这样就构成了一个Task的基本运行逻辑；
- * getNextBufferOrEvent的流程： (对SingleInputGate来说)
+ * getNextBufferOrEvent的流程： (对 SingleInputGate 来说)
  * 	1. requestPartitions(一次性)：首先让每个 inputChannel 去关联对应的sub-partition， 这涉及到 channel 和 ResultPartitionView 的关联，需要后续再看
- * 	2.
+ * 	2. SingleInputGate通过维护一个队列(只包含所有有数据的inputChannel)形成了一个生产者消费者设计模式，
+ * 	3. 进入getNextBufferOrEvent()方法，开始消费者的逻辑，从inputChannel中消费数据，消费到了，就返回。消费出一条之后，还会判断是否有更多数据，如果还有，就触发queueChannel的逻辑
+ * 	4. queueChannel其中就是生产者的逻辑，把一个有数据的inputChannel加入到队列中，通知阻塞的消费者 (还会通知inputGate监听器)
+ * 	5. 除了消费的时候会触发queueChannel的逻辑，notifyChannelNonEmpty(channel)方法也会触发，这个是类似回调的方式，通知当前InputGate有新的InputChannel有新数据可以消费了；
+ * 整个流程就是从SingleInputGate中获取数据的流程；
  *
- * ======================= Task的输出 =======================
+ * (对 UnionInputGate 来说)
+ * 整体过程和SingleInputGate基本是一致的，只是队列中的数据不再是InputChannel，而是SingleInputGate，所以UnionInputGate就可以理解为是由几个SingleInputGate组成的
+ * 其他过程都是完全一致的；
+ *
+ * ======================= Task的输入 =======================
  *
  * Task 的输入被抽象为 InputGate, 而 InputGate 则由 InputChannel 组成， InputChannel 和该 Task 需要消费的 ResultSubpartition 是一一对应的。
  * Task 通过循环调用 InputGate.getNextBufferOrEvent 方法获取输入数据，并将获取的数据交给它所封装的算子进行处理，这构成了一个 Task 的基本运行逻辑。
  * InputGate 有两个具体的实现，分别为 SingleInputGate 和 UnionInputGate, UnionInputGate 有多个 SingleInputGate 联合构成;
+ *
+ * InputGate 实际上可以理解为是对 InputChannel 的一层封装，实际数据的获取还是要依赖于 InputChannel。
+ *
+ *
+ * ======================= 问题： =======================
+ * 数据输出的逻辑已经清楚了，通过RecordWriter最终写入到ResultSubPartition，然后通知SubpartitionView，
+ * 数据输入的逻辑也清楚了，通过InputGate(内部维护一个生产者消费者的逻辑)，最终从InputChannel中循环读取buffer数据；
+ * 这两者怎么结合起来的呢？
  */
 public interface InputGate {
 

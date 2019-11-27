@@ -62,8 +62,10 @@ import static org.apache.flink.util.Preconditions.checkState;
  * </pre>
  *
  * <strong>It is NOT possible to recursively union union input gates.</strong>
+ *
+ * UnionInputGate 是多个 SingleInputGate 联合组成，它的内部有一个 inputGatesWithData 队列：
  */
-public class UnionInputGate implements InputGate, InputGateListener {
+public class UnionInputGate implements InputGate, InputGateListener {  //还是一个监听器，可以监听SingleInputGate是否有数据产生；
 
 	/** The input gates to union. */
 	private final InputGate[] inputGates;
@@ -71,6 +73,7 @@ public class UnionInputGate implements InputGate, InputGateListener {
 	private final Set<InputGate> inputGatesWithRemainingData;
 
 	/** Gates, which notified this input gate about available data. */
+	//UnionInputGate 维护的是一个所有 SingleInputGate 组成的队列；
 	private final ArrayDeque<InputGate> inputGatesWithData = new ArrayDeque<>();
 
 	/**
@@ -93,7 +96,7 @@ public class UnionInputGate implements InputGate, InputGateListener {
 	/** Flag indicating whether partitions have been requested. */
 	private boolean requestedPartitionsFlag;
 
-	public UnionInputGate(InputGate... inputGates) {
+	public UnionInputGate(InputGate... inputGates) { //这里也可以看出UnionInputGate由多个SingleInputGate组成；
 		this.inputGates = checkNotNull(inputGates);
 		checkArgument(inputGates.length > 1, "Union input gate should union at least two input gates.");
 
@@ -105,7 +108,7 @@ public class UnionInputGate implements InputGate, InputGateListener {
 		for (InputGate inputGate : inputGates) {
 			if (inputGate instanceof UnionInputGate) {
 				// if we want to add support for this, we need to implement pollNextBufferOrEvent()
-				throw new UnsupportedOperationException("Cannot union a union of input gates.");
+				throw new UnsupportedOperationException("Cannot union a union of input gates."); //而且只能是 SingleInputGate
 			}
 
 			// The offset to use for buffer or event instances received from this input gate.
@@ -151,6 +154,8 @@ public class UnionInputGate implements InputGate, InputGateListener {
 		}
 	}
 
+	// <<<<<<<<<<<<<<<<<<<<<<<<< root <<<<<<<<<<<<<<<<<<<<<<<<<<<
+	//Task获取数据的入口
 	@Override
 	public Optional<BufferOrEvent> getNextBufferOrEvent() throws IOException, InterruptedException {
 		if (inputGatesWithRemainingData.isEmpty()) {
@@ -158,20 +163,22 @@ public class UnionInputGate implements InputGate, InputGateListener {
 		}
 
 		// Make sure to request the partitions, if they have not been requested before.
+		//请求分区
 		requestPartitions();
 
-		InputGateWithData inputGateWithData = waitAndGetNextInputGate();
-		InputGate inputGate = inputGateWithData.inputGate;
-		BufferOrEvent bufferOrEvent = inputGateWithData.bufferOrEvent;
+		InputGateWithData inputGateWithData = waitAndGetNextInputGate(); //阻塞的获取一个有数据的InputGate (内部类里还有buffer、标记位) 消费者
+		InputGate inputGate = inputGateWithData.inputGate;     //有数据的inputGate
+		BufferOrEvent bufferOrEvent = inputGateWithData.bufferOrEvent;  //消费出来的数据
 
 		if (bufferOrEvent.moreAvailable()) {
+			//这个 InputGate 中还有更多的数据，继续加入队列
 			// this buffer or event was now removed from the non-empty gates queue
 			// we re-add it in case it has more data, because in that case no "non-empty" notification
 			// will come for that gate
-			queueInputGate(inputGate);
+			queueInputGate(inputGate);  //这里肯定是生产者的逻辑呗。。。
 		}
 
-		if (bufferOrEvent.isEvent()
+		if (bufferOrEvent.isEvent() //判断是否结束
 			&& bufferOrEvent.getEvent().getClass() == EndOfPartitionEvent.class
 			&& inputGate.isFinished()) {
 
@@ -188,7 +195,7 @@ public class UnionInputGate implements InputGate, InputGateListener {
 		bufferOrEvent.setChannelIndex(channelIndexOffset + bufferOrEvent.getChannelIndex());
 		bufferOrEvent.setMoreAvailable(bufferOrEvent.moreAvailable() || inputGateWithData.moreInputGatesAvailable);
 
-		return Optional.of(bufferOrEvent);
+		return Optional.of(bufferOrEvent);   //返回数据
 	}
 
 	@Override
@@ -196,27 +203,30 @@ public class UnionInputGate implements InputGate, InputGateListener {
 		throw new UnsupportedOperationException();
 	}
 
+	//阻塞获取下一个有数据的 SingleInputGate
+	//这里又是消费者的逻辑，只不过阻塞的队列中的数据不是InputChannel而是 SingleInputGate
 	private InputGateWithData waitAndGetNextInputGate() throws IOException, InterruptedException {
 		while (true) {
 			InputGate inputGate;
 			boolean moreInputGatesAvailable;
-			synchronized (inputGatesWithData) {
+			synchronized (inputGatesWithData) {  //队列锁
 				while (inputGatesWithData.size() == 0) {
-					inputGatesWithData.wait();
+					inputGatesWithData.wait(); // 阻塞
 				}
-				inputGate = inputGatesWithData.remove();
+				inputGate = inputGatesWithData.remove();  //获取一个
 				enqueuedInputGatesWithData.remove(inputGate);
-				moreInputGatesAvailable = enqueuedInputGatesWithData.size() > 0;
+				moreInputGatesAvailable = enqueuedInputGatesWithData.size() > 0; //是否还有 inputeGate有数据；
 			}
 
 			// In case of inputGatesWithData being inaccurate do not block on an empty inputGate, but just poll the data.
 			Optional<BufferOrEvent> bufferOrEvent = inputGate.pollNextBufferOrEvent();
 			if (bufferOrEvent.isPresent()) {
-				return new InputGateWithData(inputGate, bufferOrEvent.get(), moreInputGatesAvailable);
+				return new InputGateWithData(inputGate, bufferOrEvent.get(), moreInputGatesAvailable); //返回这个内部类
 			}
 		}
 	}
 
+	//静态内部类；包含一个 SingleInputGate 和 一个buffer(数据) 和 一个标记(是否还有更多)
 	private static class InputGateWithData {
 		private final InputGate inputGate;
 		private final BufferOrEvent bufferOrEvent;
@@ -263,11 +273,13 @@ public class UnionInputGate implements InputGate, InputGateListener {
 		queueInputGate(checkNotNull(inputGate));
 	}
 
+	//把一个有数据的 SingleInputGate 加入到队列中
+	//生产者的逻辑
 	private void queueInputGate(InputGate inputGate) {
 		int availableInputGates;
 
-		synchronized (inputGatesWithData) {
-			if (enqueuedInputGatesWithData.contains(inputGate)) {
+		synchronized (inputGatesWithData) {    //锁
+			if (enqueuedInputGatesWithData.contains(inputGate)) {    //下面的逻辑和SingleInputGate的是一样的；
 				return;
 			}
 
@@ -277,7 +289,7 @@ public class UnionInputGate implements InputGate, InputGateListener {
 			enqueuedInputGatesWithData.add(inputGate);
 
 			if (availableInputGates == 0) {
-				inputGatesWithData.notifyAll();
+				inputGatesWithData.notifyAll();  //notify 通知
 			}
 		}
 

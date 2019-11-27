@@ -126,7 +126,7 @@ public class SingleInputGate implements InputGate {
 	 * The index of the consumed subpartition of each consumed partition. This index depends on the
 	 * {@link DistributionPattern} and the subtask indices of the producing and consuming task.
 	 */
-	private final int consumedSubpartitionIndex;
+	private final int consumedSubpartitionIndex;  //要消费的 subPartition 的 index，因为SingleInputGate只有一个InputChannel，所以这里可以是全局的
 
 	/** The number of input channels (equivalent to the number of consumed partitions). */
 	private final int numberOfInputChannels;   //inputChannel的个数
@@ -518,7 +518,6 @@ public class SingleInputGate implements InputGate {
 
 	/**
 	 * 阻塞和非阻塞都是调用的这个；
-	 * 
 	 */
 	private Optional<BufferOrEvent> getNextBufferOrEvent(boolean blocking) throws IOException, InterruptedException {
 		if (hasReceivedAllEndOfPartitionEvents) {
@@ -537,7 +536,7 @@ public class SingleInputGate implements InputGate {
 		Optional<BufferAndAvailability> result = Optional.empty();
 
 		do {
-			synchronized (inputChannelsWithData) {  //以这个只包含所有有数据的channel的队列为锁，(回想生产者-消费者模型)
+			synchronized (inputChannelsWithData) {  //以这个只包含所有有数据的channel的队列为锁，(回想生产者-消费者模型)   <<<<<< 消费者
 
 				//从 inputChannelsWithData 队列中获取有数据的 channel，经典的生产者-消费者模式;   inputChannelsWithData是所有inputChannel组成的队列；
 				while (inputChannelsWithData.size() == 0) {  //说明所有的channel都没有新数据； 也就是说 inputChannelsWithData 中包含的是所有有数据可供消费的inputChannel
@@ -559,14 +558,14 @@ public class SingleInputGate implements InputGate {
 				moreAvailable = inputChannelsWithData.size() > 0; //是否还有其他inputChannel有数据可消费；
 			}
 
-			result = currentChannel.getNextBuffer(); //获取一个buffer
+			result = currentChannel.getNextBuffer(); //获取一个buffer(数据)
 		} while (!result.isPresent());  //result没值，就一直在这循环获取
 
 		// this channel was now removed from the non-empty channels queue
 		// we re-add it in case it has more data, because in that case no "non-empty" notification
 		// will come for that channel
-		if (result.get().moreAvailable()) { //如果上一个channel有不止一条数据的话，
-			queueChannel(currentChannel);	//就把它加回 inputChannelsWithData 队列中，以便下次继续消费
+		if (result.get().moreAvailable()) { //如果上一个channel有不止一条数据(buffer)的话，
+			queueChannel(currentChannel);	//就把它加回 inputChannelsWithData 队列中，以便下次继续消费  (这里是生产者的逻辑)
 			moreAvailable = true;
 		}
 
@@ -577,6 +576,8 @@ public class SingleInputGate implements InputGate {
 		else {
 			final AbstractEvent event = EventSerializer.fromBuffer(buffer, getClass().getClassLoader());
 
+			//如果是 EndOfPartitionEvent 事件，那么如果所有的 InputChannel 都接收到这个事件了
+			//将 hasReceivedAllEndOfPartitionEvents 标记为 true，此后不再能获取到数据
 			if (event.getClass() == EndOfPartitionEvent.class) {
 				channelsWithEndOfPartitionEvents.set(currentChannel.getChannelIndex());
 
@@ -626,6 +627,7 @@ public class SingleInputGate implements InputGate {
 		}
 	}
 
+	//当一个 InputChannel 有数据时的回调
 	void notifyChannelNonEmpty(InputChannel channel) {
 		queueChannel(checkNotNull(channel));
 	}
@@ -638,24 +640,23 @@ public class SingleInputGate implements InputGate {
 	private void queueChannel(InputChannel channel) {
 		int availableChannels;
 
-		synchronized (inputChannelsWithData) { //也用  inputChannelsWithData 为锁
+		synchronized (inputChannelsWithData) { //也用  inputChannelsWithData 为锁    <<<<< 生产者
 			if (enqueuedInputChannelsWithData.get(channel.getChannelIndex())) { //已经在队列中了，直接返回
 				return;
 			}
 
 			//否则，加入队列；
-
 			availableChannels = inputChannelsWithData.size(); //注意这里是加入队列之前获取的
 
 			inputChannelsWithData.add(channel);  //入队
 			enqueuedInputChannelsWithData.set(channel.getChannelIndex());  //标记对应channel已在队列中
 
 			if (availableChannels == 0) {  //为什么=0的时候notify呢？  因为availableChannels是新channel进队列之前取的，也就是说之前没有channel有数据，所以消费者阻塞了，现在有数据了，需要唤醒
-				inputChannelsWithData.notifyAll(); //在这进行的 notifyAll 唤醒；
+				inputChannelsWithData.notifyAll(); //在这进行的 notifyAll 唤醒； 唤醒所有消费者
 			}
 		}
 
-		if (availableChannels == 0) {
+		if (availableChannels == 0) { //原因同上
 			InputGateListener listener = inputGateListener;
 			if (listener != null) {
 				listener.notifyInputGateNonEmpty(this); //通知InputGate监听器有数据可以消费了
