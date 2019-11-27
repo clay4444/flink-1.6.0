@@ -56,6 +56,8 @@ import static org.apache.flink.util.Preconditions.checkState;
  * Task 通过 RecordWriter 将结果写入 ResultPartition 中。
  * RecordWriter 是对 ResultPartitionWriter 的一层封装，并负责将记录对象序列化到 buffer 中。先来看一下 RecordWriter 的成员变量和构造函数：
  *
+ * 也就是说一个Task对应一个RecordWriter，这个RecordWriter的作用就是往下游发送数据；
+ *
  * 当 Task 通过 RecordWriter 输出一条记录时，主要流程为：
  * 1. 通过 ChannelSelector 确定写入的目标 channel
  * 2. 使用 RecordSerializer 对记录进行序列化
