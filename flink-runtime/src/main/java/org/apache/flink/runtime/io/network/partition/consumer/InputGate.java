@@ -90,11 +90,13 @@ import java.util.Optional;
  *
  * InputGate 实际上可以理解为是对 InputChannel 的一层封装，实际数据的获取还是要依赖于 InputChannel。
  *
- *
  * ======================= 问题： =======================
  * 数据输出的逻辑已经清楚了，通过RecordWriter最终写入到ResultSubPartition，然后通知SubpartitionView，
- * 数据输入的逻辑也清楚了，通过InputGate(内部维护一个生产者消费者的逻辑)，最终从InputChannel中循环读取buffer数据；
+ * 数据输入的逻辑也清楚了，通过InputGate(内部维护一个生产者消费者的逻辑)，最终从 InputChannel 中循环读取buffer数据；
  * 这两者怎么结合起来的呢？
+ *
+ * InputChannel有两种不同的实现：LocalInputChannel 和 RemoteInputChannel，分别对应本地和远程数据交换；
+ *  > 后续 -> LocalInputChannel
  */
 public interface InputGate {
 

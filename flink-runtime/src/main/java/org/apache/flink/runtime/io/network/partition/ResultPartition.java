@@ -92,6 +92,7 @@ import static org.apache.flink.util.Preconditions.checkState;
  * 		3.4 向 ResultPartition 添加 BufferConsumer，用于读取写入 Buffer , 写完就读取？ 什么意思？ 这里可以理解为就是把一个可以读取的buffer给了 sub-partition，忽略consumer这个概念；
  *	4. 调用subpartition#add把数据加到本身的buffer队列中，然后通知 PipelinedSubpartitionView 数据产生，可以被消费了(只有第一个buffer会通知)
  *  5. 那么这个 SubpartitionView 是什么时候，怎么产生的呢？是由 resultPartitionManager#createSubpartitionView 创建的(并和对应的sub-partition关联)，创建的时候传入一个监听器，当对应的sub-partition产生数据通知的时候，回调这个监听器的方法；
+ *  什么时候创建的呢？看 LocalInputChannel#requestSubpartition，也就是inputChannel请求分区的时候创建的
  *
  *  至此，我们已经了解了一个 Task 如何输出结果到 ResultPartition 中，以及如何去消费不同 ResultSubpartition 中的这些用于保存序列化结果的 Buffer。
  *  ======================= Task的输出 =======================

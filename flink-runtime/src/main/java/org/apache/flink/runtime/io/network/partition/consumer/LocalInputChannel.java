@@ -42,6 +42,8 @@ import static org.apache.flink.util.Preconditions.checkState;
 
 /**
  * An input channel, which requests a local subpartition.
+ * 对应InputChannel和上游的 ResultSubpartition 存在同一个tm的情况；此时它们之间的数据交换就在同一个 JVM 进程内不同线程之间进行，无需通过网络交换
+ * ResultSubpartition 中的 buffer 可以通过 ResultSubpartitionView 进行消费
  */
 public class LocalInputChannel extends InputChannel implements BufferAvailabilityListener {
 
@@ -94,6 +96,11 @@ public class LocalInputChannel extends InputChannel implements BufferAvailabilit
 	// Consume
 	// ------------------------------------------------------------------------
 
+	/**
+	 * 这个方法只会执行一次，请求当前inputChannel对应的 ResultSubPartition
+	 * 在Task通过循环调用 InputGate.getNextBufferOrEvent 方法获取输入数据时，会请求一次(仅一次)
+	 */
+	//请求消费对应的子分区
 	@Override
 	void requestSubpartition(int subpartitionIndex) throws IOException, InterruptedException {
 
@@ -108,8 +115,9 @@ public class LocalInputChannel extends InputChannel implements BufferAvailabilit
 					this, subpartitionIndex, partitionId);
 
 				try {
+					//奥，SubpartitionView竟然是在这里创建的，SubpartitionView就是用来消费 ResultSubPartition的数据的；
 					ResultSubpartitionView subpartitionView = partitionManager.createSubpartitionView(
-						partitionId, subpartitionIndex, this);
+						partitionId, subpartitionIndex, this); //这里监听器设置的是this，所以当上游ResultPartition产生数据的时候，会调用 notifyDataAvailable()
 
 					if (subpartitionView == null) {
 						throw new IOException("Error requesting subpartition.");
@@ -197,9 +205,13 @@ public class LocalInputChannel extends InputChannel implements BufferAvailabilit
 		return Optional.of(new BufferAndAvailability(next.buffer(), next.isMoreAvailable(), next.buffersInBacklog()));
 	}
 
+	/**
+	 * 上游 ResultSubPartition 产生数据的时候，会回调这个方法
+	 */
 	@Override
 	public void notifyDataAvailable() {
 		notifyChannelNonEmpty();
+		//然后这个方法会把当前这个channel(已经有数据了)加入到 InputGate的 inputChannelsWithData这个队列中，后续Task再从InputGate中消费的时候，就可以拿到数据了；
 	}
 
 	private ResultSubpartitionView checkAndWaitForSubpartitionView() {
