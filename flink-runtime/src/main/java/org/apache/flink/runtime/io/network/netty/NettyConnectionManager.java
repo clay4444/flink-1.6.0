@@ -25,6 +25,10 @@ import org.apache.flink.runtime.io.network.partition.ResultPartitionProvider;
 
 import java.io.IOException;
 
+/**
+ * 在NetworkEnvironment中提供服务，所以也是每个tm一个？
+ * ConnectionManager的具体实现，用来管理所有的网络连接； Netty
+ */
 public class NettyConnectionManager implements ConnectionManager {
 
 	private final NettyServer server;
@@ -43,6 +47,7 @@ public class NettyConnectionManager implements ConnectionManager {
 		this.partitionRequestClientFactory = new PartitionRequestClientFactory(client);
 	}
 
+	//NettyConnectionManager 在启动的时候会创建并启动 NettyClient 和 NettyServer，NettyServer 会启动一个服务端监听，等待其它 NettyClient 的连接：
 	@Override
 	public void start(ResultPartitionProvider partitionProvider, TaskEventDispatcher taskEventDispatcher) throws IOException {
 		NettyProtocol partitionRequestProtocol = new NettyProtocol(
@@ -50,7 +55,10 @@ public class NettyConnectionManager implements ConnectionManager {
 			taskEventDispatcher,
 			client.getConfig().isCreditBasedEnabled());
 
+		//初始化 Netty Client
 		client.init(partitionRequestProtocol, bufferPool);
+
+		//初始化并启动 Netty Server
 		server.init(partitionRequestProtocol, bufferPool);
 	}
 

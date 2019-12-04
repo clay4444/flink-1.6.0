@@ -65,6 +65,7 @@ public class NetworkEnvironment {
 	//网络资源池，从这里取资源；
 	private final NetworkBufferPool networkBufferPool;
 
+	//通过 ConnectionManager 来管理所有的网络连接；  可用的实现目前看只有一个，NettyConnectionManager
 	private final ConnectionManager connectionManager;
 
 	//管理当前tm的所有 ResultPartition (每个task一个)
