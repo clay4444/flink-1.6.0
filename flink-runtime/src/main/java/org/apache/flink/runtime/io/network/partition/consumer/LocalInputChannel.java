@@ -43,7 +43,8 @@ import static org.apache.flink.util.Preconditions.checkState;
 /**
  * An input channel, which requests a local subpartition.
  *
- * 对应InputChannel和上游的 ResultSubpartition 存在同一个tm的情况；此时它们之间的数据交换就在同一个 JVM 进程内不同线程之间进行，无需通过网络交换
+ * 对应InputChannel和上游的 ResultSubpartition 存在同一个tm的情况(也就是两个Task在同一个tm上)
+ * 此时它们之间的数据交换就在同一个 JVM 进程内不同线程之间进行，无需通过网络交换
  * ResultSubpartition 中的 buffer 可以通过 ResultSubpartitionView 进行消费
  *
  * 这里的逻辑相对比较简单，LocalInputChannel 实现了 InputChannel 接口，同时也实现了 BufferAvailabilityListener 接口。

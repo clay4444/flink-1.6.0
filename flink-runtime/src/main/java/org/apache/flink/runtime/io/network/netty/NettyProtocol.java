@@ -26,6 +26,8 @@ import org.apache.flink.shaded.netty4.io.netty.channel.ChannelHandler;
 
 /**
  * Defines the server and client channel handlers, i.e. the protocol, used by netty.
+ *
+ * NettyProtocol 中提供了 NettyClient 和 NettyServer 引导启动注册的一系列 Channel Handler，这些 Handler 的主要逻辑在后面再进行详细分析：
  */
 public class NettyProtocol {
 
@@ -75,6 +77,7 @@ public class NettyProtocol {
 	 * </pre>
 	 *
 	 * @return channel handlers
+	 * netty server 端的 ChannelHandler
 	 */
 	public ChannelHandler[] getServerChannelHandlers() {
 		PartitionRequestQueue queueOfPartitionQueues = new PartitionRequestQueue();
@@ -120,6 +123,7 @@ public class NettyProtocol {
 	 * </pre>
 	 *
 	 * @return channel handlers
+	 * netty client 端的 ChannelHandler
 	 */
 	public ChannelHandler[] getClientChannelHandlers() {
 		NetworkClientHandler networkClientHandler =

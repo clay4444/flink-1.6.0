@@ -38,6 +38,9 @@ import static org.apache.flink.runtime.io.network.netty.NettyMessage.TaskEventRe
 
 /**
  * Channel handler to initiate data transfers and dispatch backwards flowing task events.
+ *
+ * NettyServer 的其中一个 ChannelHandler，
+ * 负责处理消费端通过 PartitionRequestClient 发送的 PartitionRequest 和 AddCredit 等请求
  */
 class PartitionRequestServerHandler extends SimpleChannelInboundHandler<NettyMessage> {
 
@@ -47,6 +50,7 @@ class PartitionRequestServerHandler extends SimpleChannelInboundHandler<NettyMes
 
 	private final TaskEventDispatcher taskEventDispatcher;
 
+	//另外一个 Channel Handler
 	private final PartitionRequestQueue outboundQueue;
 
 	private final boolean creditBasedEnabled;
@@ -73,6 +77,7 @@ class PartitionRequestServerHandler extends SimpleChannelInboundHandler<NettyMes
 		super.channelUnregistered(ctx);
 	}
 
+	//channel可读的回调方法；
 	@Override
 	protected void channelRead0(ChannelHandlerContext ctx, NettyMessage msg) throws Exception {
 		try {
@@ -81,13 +86,13 @@ class PartitionRequestServerHandler extends SimpleChannelInboundHandler<NettyMes
 			// ----------------------------------------------------------------
 			// Intermediate result partition requests
 			// ----------------------------------------------------------------
-			if (msgClazz == PartitionRequest.class) {
+			if (msgClazz == PartitionRequest.class) {     //Server 端接收到 client 发送的 PartitionRequest, 接下来做了什么呢？
 				PartitionRequest request = (PartitionRequest) msg;
 
 				LOG.debug("Read channel on {}: {}.", ctx.channel().localAddress(), request);
 
 				try {
-					NetworkSequenceViewReader reader;
+					NetworkSequenceViewReader reader;   //1. 创建了一个NetworkSequenceViewReader 对象
 					if (creditBasedEnabled) {
 						reader = new CreditBasedSequenceNumberingViewReader(
 							request.receiverId,
@@ -99,6 +104,7 @@ class PartitionRequestServerHandler extends SimpleChannelInboundHandler<NettyMes
 							outboundQueue);
 					}
 
+					//2.请求创建 ResultSubpartitionView(这个是我们之前熟悉的，用来消费对应的ResultSubPartition的数据的)，看到底，最终还是调用的 ResultPartitionManager#createSubpartitionView
 					reader.requestSubpartitionView(
 						partitionProvider,
 						request.partitionId,

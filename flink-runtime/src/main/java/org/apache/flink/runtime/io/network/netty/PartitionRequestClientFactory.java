@@ -37,11 +37,14 @@ import java.util.concurrent.ConcurrentMap;
  *
  * <p>Instances of partition requests clients are shared among several {@link RemoteInputChannel}
  * instances.
+ *
+ * 构建 "inputChannel请求远程tm的ResultSubPartition的客户端"  的工厂类；
  */
 class PartitionRequestClientFactory {
 
 	private final NettyClient nettyClient;
 
+	//key是 ConnectionID(连接id，标识一个连接)，value是最终的 "inputChannel请求远程tm的ResultSubPartition的客户端"
 	private final ConcurrentMap<ConnectionID, Object> clients = new ConcurrentHashMap<ConnectionID, Object>();
 
 	PartitionRequestClientFactory(NettyClient nettyClient) {
@@ -49,6 +52,8 @@ class PartitionRequestClientFactory {
 	}
 
 	/**
+	 * 创建： 用来请求远程tm上的 ResultSubPartition 的客户端：  "PartitionRequestClient"
+	 *
 	 * Atomically establishes a TCP connection to the given remote address and
 	 * creates a {@link PartitionRequestClient} instance for this connection.
 	 */
@@ -76,13 +81,15 @@ class PartitionRequestClientFactory {
 				// We create a "connecting future" and atomically add it to the map.
 				// Only the thread that really added it establishes the channel.
 				// The others need to wait on that original establisher's future.
-				ConnectingChannel connectingChannel = new ConnectingChannel(connectionId, this);
+
+				//这个连接还没有channel，说明还没有和远程的 NettyServer 建立连接；此时需要用 nettyClient 去连接远程ip，然后阻塞的返回创建成功的channel；
+				ConnectingChannel connectingChannel = new ConnectingChannel(connectionId, this);  //监听连接是否建立成功的监听器；
 				Object old = clients.putIfAbsent(connectionId, connectingChannel);
 
 				if (old == null) {
-					nettyClient.connect(connectionId.getAddress()).addListener(connectingChannel);
+					nettyClient.connect(connectionId.getAddress()).addListener(connectingChannel); //连接远程server，并添加监听器；
 
-					client = connectingChannel.waitForChannel();
+					client = connectingChannel.waitForChannel();  //阻塞的等待(通过加锁的方式来实现阻塞的)，从监听器中获取的最终的client，也就是说最终的client是在connectingChannel这个监听器中创建的；
 
 					clients.replace(connectionId, connectingChannel, client);
 				}
@@ -130,6 +137,9 @@ class PartitionRequestClientFactory {
 		clients.remove(connectionId, client);
 	}
 
+	/**
+	 * 继承了ChannelFutureListener，所以当发生channel相关的事件时 (在这里是connect连接建立)，会触发回调
+	 */
 	private static final class ConnectingChannel implements ChannelFutureListener {
 
 		private final Object connectLock = new Object();
@@ -162,11 +172,13 @@ class PartitionRequestClientFactory {
 			return result;
 		}
 
-		private void handInChannel(Channel channel) {
+		//连接已成功建立进来这里； 创建 partitionRequestClient 的逻辑在这里；
+		private void handInChannel(Channel channel) {  // channel 代表的是 已经建立的TCP连接
 			synchronized (connectLock) {
 				try {
+					//这个 ChannelHandler 是干啥的？
 					NetworkClientHandler clientHandler = channel.pipeline().get(NetworkClientHandler.class);
-					partitionRequestClient = new PartitionRequestClient(
+					partitionRequestClient = new PartitionRequestClient(   //>>>>>>>>>>> 最终创建 PartitionRequestClient，用来请求远程的 ResultSubPartition
 						channel, clientHandler, connectionId, clientFactory);
 
 					if (disposeRequestClient) {
@@ -185,6 +197,8 @@ class PartitionRequestClientFactory {
 
 		private volatile Throwable error;
 
+		//阻塞方式(通过锁)，等待channel建立完成，返回 partitionRequestClient(请求远程ResultSubPartition的客户端)
+		//为什么需要加锁阻塞？因为上层NettyClient刚通过connect建立连接，就去获取了，此时连接还没建立呢，目的就是要保证channel已经建立成功了、partitionRequestClient已经创建了，再去获取
 		private PartitionRequestClient waitForChannel() throws IOException, InterruptedException {
 			synchronized (connectLock) {
 				while (error == null && partitionRequestClient == null) {
@@ -206,10 +220,11 @@ class PartitionRequestClientFactory {
 			}
 		}
 
+		//操作完成 (这里是connect连接建立完成)，回调这个方法；
 		@Override
 		public void operationComplete(ChannelFuture future) throws Exception {
 			if (future.isSuccess()) {
-				handInChannel(future.channel());
+				handInChannel(future.channel()); //连接成功建立；
 			}
 			else if (future.cause() != null) {
 				notifyOfError(new RemoteTransportException(

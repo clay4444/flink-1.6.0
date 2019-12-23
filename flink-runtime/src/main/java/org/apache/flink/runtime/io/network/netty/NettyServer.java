@@ -68,20 +68,22 @@ class NettyServer {
 		localAddress = null;
 	}
 
+	//初始化，在ConnectionManager的start方法中调用；
 	void init(final NettyProtocol protocol, NettyBufferPool nettyBufferPool) throws IOException {
 		checkState(bootstrap == null, "Netty server has already been initialized.");
 
 		final long start = System.nanoTime();
 
-		bootstrap = new ServerBootstrap();
+		bootstrap = new ServerBootstrap(); //1.创建服务端引导
 
 		// --------------------------------------------------------------------
 		// Transport-specific configuration
 		// --------------------------------------------------------------------
 
+		//2. 根据配置选择需要绑定的 EventLoop
 		switch (config.getTransportType()) {
 			case NIO:
-				initNioBootstrap();
+				initNioBootstrap(); //选择使用NioEventLoopGroup
 				break;
 
 			case EPOLL:
@@ -103,7 +105,7 @@ class NettyServer {
 		// Configuration
 		// --------------------------------------------------------------------
 
-		// Server bind address
+		// Server bind address  3. 引导绑定server ip 和 端口
 		bootstrap.localAddress(config.getServerAddress(), config.getServerPort());
 
 		// Pooled allocators for Netty's ByteBuf instances
@@ -121,12 +123,17 @@ class NettyServer {
 			bootstrap.childOption(ChannelOption.SO_RCVBUF, receiveAndSendBufferSize);
 		}
 
+		//4. 配置高水位线和低水位线，如果 Netty 输出缓冲中的字节数超过了高水位值，我们会等到其降到低水位值以下才继续写入数据。通过水位线机制确保不往网络中写入太多数据：(网络流控)
 		// Low and high water marks for flow control
 		// hack around the impossibility (in the current netty version) to set both watermarks at
 		// the same time:
 		final int defaultHighWaterMark = 64 * 1024; // from DefaultChannelConfig (not exposed)
 		final int newLowWaterMark = config.getMemorySegmentSize() + 1;
 		final int newHighWaterMark = 2 * config.getMemorySegmentSize();
+
+		//配置水位线，确保不往网络中写入太多数据
+		//当输出缓冲中的字节数超过高水位值, 则 Channel.isWritable() 会返回false
+		//当输出缓存中的字节数低于低水位值, 则 Channel.isWritable() 会重新返回true
 		if (newLowWaterMark > defaultHighWaterMark) {
 			bootstrap.childOption(ChannelOption.WRITE_BUFFER_HIGH_WATER_MARK, newHighWaterMark);
 			bootstrap.childOption(ChannelOption.WRITE_BUFFER_LOW_WATER_MARK, newLowWaterMark);
@@ -147,6 +154,7 @@ class NettyServer {
 		// Child channel pipeline for accepted connections
 		// --------------------------------------------------------------------
 
+		//5.配置server 相应的 channelHandler
 		bootstrap.childHandler(new ChannelInitializer<SocketChannel>() {
 			@Override
 			public void initChannel(SocketChannel channel) throws Exception {
@@ -155,7 +163,7 @@ class NettyServer {
 					channel.pipeline().addLast("ssl", new SslHandler(sslEngine));
 				}
 
-				channel.pipeline().addLast(protocol.getServerChannelHandlers());
+				channel.pipeline().addLast(protocol.getServerChannelHandlers()); //直接从NettyProtocol中取的
 			}
 		});
 
@@ -163,9 +171,9 @@ class NettyServer {
 		// Start Server
 		// --------------------------------------------------------------------
 
-		bindFuture = bootstrap.bind().syncUninterruptibly();
+		bindFuture = bootstrap.bind().syncUninterruptibly();  //6.绑定开始监听；
 
-		localAddress = (InetSocketAddress) bindFuture.channel().localAddress();
+		localAddress = (InetSocketAddress) bindFuture.channel().localAddress();  //监听的本地ip
 
 		final long duration = (System.nanoTime() - start) / 1_000_000;
 		LOG.info("Successful initialization (took {} ms). Listening on SocketAddress {}.", duration, localAddress);
@@ -200,15 +208,18 @@ class NettyServer {
 		LOG.info("Successful shutdown (took {} ms).", duration);
 	}
 
+	//选择使用NioEventLoopGroup；
 	private void initNioBootstrap() {
 		// Add the server port number to the name in order to distinguish
 		// multiple servers running on the same host.
 		String name = NettyConfig.SERVER_THREAD_GROUP_NAME + " (" + config.getServerPort() + ")";
 
+		//线程个数默认等于task slot的个数
 		NioEventLoopGroup nioGroup = new NioEventLoopGroup(config.getServerNumThreads(), getNamedThreadFactory(name));
-		bootstrap.group(nioGroup).channel(NioServerSocketChannel.class);
+		bootstrap.group(nioGroup).channel(NioServerSocketChannel.class); //绑定 EventLoop
 	}
 
+	//选择使用EpollEventLoopGroup；
 	private void initEpollBootstrap() {
 		// Add the server port number to the name in order to distinguish
 		// multiple servers running on the same host.

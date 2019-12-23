@@ -65,7 +65,7 @@ public class NetworkEnvironment {
 	//网络资源池，从这里取资源；
 	private final NetworkBufferPool networkBufferPool;
 
-	//通过 ConnectionManager 来管理所有的网络连接；  可用的实现目前看只有一个，NettyConnectionManager
+	//通过 ConnectionManager 来管理所有的网络连接；  可用的实现目前看只有一个，NettyConnectionManager(主要在两个Task在两个不同的tm上通过网络交换数据时使用)
 	private final ConnectionManager connectionManager;
 
 	//管理当前tm的所有 ResultPartition (每个task一个)
@@ -251,18 +251,21 @@ public class NetworkEnvironment {
 		taskEventDispatcher.registerPartition(partition.getPartitionId());
 	}
 
-	//每一个Task都对应一个InputGate，代表这个Task的输出； 也需要为这个InputGate设置buffer资源
+	//基于信用值的流量控制算法
+	//每一个Task都对应一个InputGate，代表这个Task的输入； 也需要为这个InputGate设置buffer资源
 	@VisibleForTesting
 	public void setupInputGate(SingleInputGate gate) throws IOException {
 		BufferPool bufferPool = null;
 		int maxNumberOfMemorySegments;
 		try {
-			if (enableCreditBased) {
+			if (enableCreditBased) {   //使用 Credit-based Flow Control
+				//本地缓冲池使用的 buffer 数量，如果是 bounded，则缓冲池的大小最大为 taskmanager.network.memory.floating-buffers-per-gate
 				maxNumberOfMemorySegments = gate.getConsumedPartitionType().isBounded() ?
 					extraNetworkBuffersPerGate : Integer.MAX_VALUE;
 
 				// assign exclusive buffers to input channels directly and use the rest for floating buffers
-				gate.assignExclusiveSegments(networkBufferPool, networkBuffersPerChannel);
+				// 独占的buffer，不包含在分配的 LocalBufferPool 中，
+				gate.assignExclusiveSegments(networkBufferPool, networkBuffersPerChannel); //<<<<< 这里
 				bufferPool = networkBufferPool.createBufferPool(0, maxNumberOfMemorySegments);
 			} else {
 				maxNumberOfMemorySegments = gate.getConsumedPartitionType().isBounded() ?
@@ -272,7 +275,8 @@ public class NetworkEnvironment {
 				bufferPool = networkBufferPool.createBufferPool(gate.getNumberOfInputChannels(),
 					maxNumberOfMemorySegments);
 			}
-			gate.setBufferPool(bufferPool);
+			//分配 LocalBufferPool 本地缓冲池，这是所有 input channel 共享的
+			gate.setBufferPool(bufferPool); //<<<<<< 这里
 		} catch (Throwable t) {
 			if (bufferPool != null) {
 				bufferPool.lazyDestroy();

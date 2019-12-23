@@ -51,6 +51,9 @@ import static org.apache.flink.runtime.io.network.netty.NettyMessage.BufferRespo
 /**
  * A nonEmptyReader of partition queues, which listens for channel writability changed
  * events before writing and flushing {@link Buffer} instances.
+ *
+ * NettyServer 的其中一个 ChannelHandler，
+ * 包含了一个可以从中读取数据的 NetworkSequenceViewReader 队列，它会监听 Netty Channel 的可写入状态，一旦可以写入数据，就会从 NetworkSequenceViewReader 消费数据写入 Netty Channel。
  */
 class PartitionRequestQueue extends ChannelInboundHandlerAdapter {
 

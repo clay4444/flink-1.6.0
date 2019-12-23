@@ -46,15 +46,21 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  *
  * <p>This client is shared by all remote input channels, which request a partition
  * from the same {@link ConnectionID}.
+ *
+ * 用来请求远程的 ResultSubPartition 的客户端，
+ * 这里是具体实现；
+ * NettyConnectionManager#createPartitionRequestClient -> PartitionRequestClientFactory$ConnectingChannel#handInChannel -> 这里
  */
 public class PartitionRequestClient {
 
 	private static final Logger LOG = LoggerFactory.getLogger(PartitionRequestClient.class);
 
+	//和远程 NettyServer 建立的TCP 连接； (已经建立了)
 	private final Channel tcpChannel;
 
 	private final NetworkClientHandler clientHandler;
 
+	//连接的标识
 	private final ConnectionID connectionId;
 
 	private final PartitionRequestClientFactory clientFactory;
@@ -89,15 +95,16 @@ public class PartitionRequestClient {
 	}
 
 	/**
-	 * Requests a remote intermediate result partition queue.
+	 * 这里：>>>>>> 请求远程的 ResultSubPartition
 	 *
+	 * Requests a remote intermediate result partition queue.
 	 * <p>The request goes to the remote producer, for which this partition
 	 * request client instance has been created.
 	 */
 	public ChannelFuture requestSubpartition(
-			final ResultPartitionID partitionId,
-			final int subpartitionIndex,
-			final RemoteInputChannel inputChannel,
+			final ResultPartitionID partitionId,   //消费哪个ResultPartition
+			final int subpartitionIndex,          //具体消费它的哪个 sub partition
+			final RemoteInputChannel inputChannel,  //谁要消费
 			int delayMs) throws IOException {
 
 		checkNotClosed();
@@ -105,15 +112,20 @@ public class PartitionRequestClient {
 		LOG.debug("Requesting subpartition {} of partition {} with {} ms delay.",
 				subpartitionIndex, partitionId, delayMs);
 
+		//向 NetworkClientHandler 注册当前 RemoteInputChannel
+		//单个 Task 所有的 RemoteInputChannel 的数据传输都通过这个 NetworkClientHandler 处理
 		clientHandler.addInputChannel(inputChannel);
 
+		//要发送的request请求
 		final PartitionRequest request = new PartitionRequest(
 				partitionId, subpartitionIndex, inputChannel.getInputChannelId(), inputChannel.getInitialCredit());
 
+		//发送完之后的监听器 (主要是失败监听)
 		final ChannelFutureListener listener = new ChannelFutureListener() {
 			@Override
 			public void operationComplete(ChannelFuture future) throws Exception {
 				if (!future.isSuccess()) {
+					//如果请求发送失败，要移除当前的 inputChannel
 					clientHandler.removeInputChannel(inputChannel);
 					SocketAddress remoteAddr = future.channel().remoteAddress();
 					inputChannel.onError(
@@ -126,9 +138,9 @@ public class PartitionRequestClient {
 		};
 
 		if (delayMs == 0) {
-			ChannelFuture f = tcpChannel.writeAndFlush(request);
-			f.addListener(listener);
-			return f;
+			ChannelFuture f = tcpChannel.writeAndFlush(request);  //这里，真正的发送请求
+			f.addListener(listener); //添加监听器
+			return f;  //返回的是发送完请求之后的 ChannelFuture，奥，那触发这个的 InputChannel 就可以从这个Future中获取最终结果；
 		} else {
 			final ChannelFuture[] f = new ChannelFuture[1];
 			tcpChannel.eventLoop().schedule(new Runnable() {

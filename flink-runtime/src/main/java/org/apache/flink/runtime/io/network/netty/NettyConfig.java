@@ -157,6 +157,7 @@ public class NettyConfig {
 		return configValue == -1 ? numberOfSlots : configValue;
 	}
 
+	//server端的EventLoop要配置多少个线程，默认值等于当前tm上的slot的个数
 	public int getServerNumThreads() {
 		// default: number of task slots
 		final int configValue = config.getInteger(NUM_THREADS_SERVER);

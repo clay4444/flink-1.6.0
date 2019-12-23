@@ -52,6 +52,7 @@ import static org.apache.flink.util.Preconditions.checkState;
 
 /**
  * An input channel, which requests a remote partition queue.
+ * RemoteInputChannel，用来通过网络获取远程的 ResultPartition 的数据
  */
 public class RemoteInputChannel extends InputChannel implements BufferRecycler, BufferListener {
 
@@ -59,9 +60,11 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 	private final InputChannelID id = new InputChannelID();
 
 	/** The connection to use to request the remote partition. */
+	//用来请求远程 ResultSubPartition 的 Connection  (TCP连接)
 	private final ConnectionID connectionId;
 
 	/** The connection manager to use connect to the remote partition provider. */
+	//当前的实现只有：NettyConnectionManager，用来管理一个tm上的所有网络连接
 	private final ConnectionManager connectionManager;
 
 	/**
@@ -77,6 +80,7 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 	private final AtomicBoolean isReleased = new AtomicBoolean();
 
 	/** Client to establish a (possibly shared) TCP connection and request the partition. */
+	//一个TCP客户端，用来请求远程的 ResultSubPartition；
 	private volatile PartitionRequestClient partitionRequestClient;
 
 	/**
@@ -86,10 +90,10 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 	private int expectedSequenceNumber = 0;
 
 	/** The initial number of exclusive buffers assigned to this channel. */
-	private int initialCredit;
+	private int initialCredit;    // 初始化信用 = 初始化为当前这个channel分配的独占资源
 
 	/** The available buffer queue wraps both exclusive and requested floating buffers. */
-	private final AvailableBufferQueue bufferQueue = new AvailableBufferQueue();
+	private final AvailableBufferQueue bufferQueue = new AvailableBufferQueue();    //可用的 buffer 队列，包含 exclusive(独占的) + floating(共享的)
 
 	/** The number of available buffers that have not been announced to the producer yet. */
 	private final AtomicInteger unannouncedCredit = new AtomicInteger(0);
@@ -132,6 +136,8 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 	/**
 	 * Assigns exclusive buffers to this input channel, and this method should be called only once
 	 * after this input channel is created.
+	 *
+	 * 为这个input channel分配独占的资源；
 	 */
 	void assignExclusiveSegments(List<MemorySegment> segments) {
 		checkState(this.initialCredit == 0, "Bug in input channel setup logic: exclusive buffers have " +
@@ -140,11 +146,13 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 		checkNotNull(segments);
 		checkArgument(segments.size() > 0, "The number of exclusive buffers per channel should be larger than 0.");
 
-		this.initialCredit = segments.size();
-		this.numRequiredBuffers = segments.size();
+		this.initialCredit = segments.size();     //初始化信用 = 初始化为当前这个channel分配的独占资源
+		this.numRequiredBuffers = segments.size();   //需要的buffer
 
 		synchronized (bufferQueue) {
 			for (MemorySegment segment : segments) {
+				//注意这个 NetworkBuffer 的回收器是 RemoteInputChannel 自身，也就是说，当这个segment使用完之后，会回调这个类自身的recycle()方法；然后又放回了 AvailableBufferQueue 这个容器中；
+				//也就是说这点资源永远被当前这个input channel使用；
 				bufferQueue.addExclusiveBuffer(new NetworkBuffer(segment, this), numRequiredBuffers);
 			}
 		}
@@ -155,6 +163,7 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 	// ------------------------------------------------------------------------
 
 	/**
+	 * 通过网络，请求一个远程的 ResultSubPartition；
 	 * Requests a remote subpartition.
 	 */
 	@VisibleForTesting
@@ -162,10 +171,11 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 	public void requestSubpartition(int subpartitionIndex) throws IOException, InterruptedException {
 		if (partitionRequestClient == null) {
 			// Create a client and request the partition
-			partitionRequestClient = connectionManager
-				.createPartitionRequestClient(connectionId);
+			partitionRequestClient = connectionManager   //NettyConnectionManager yes，是它
+				.createPartitionRequestClient(connectionId); //创建请求远程ResultSubPartition的客户端，使用NettyClient去和远程NettyServer建立连接，tcpChannel 代表一个TCP连接；
 
-			partitionRequestClient.requestSubpartition(partitionId, subpartitionIndex, this, 0);
+			//通过上面建立的连接，发送一个 PartitionRequest 请求， 返回的Future这里直接忽略了？
+			partitionRequestClient.requestSubpartition(partitionId, subpartitionIndex, this, 0); //this代表是当前RemoteInputChannel要消费数据；
 		}
 	}
 
@@ -183,6 +193,7 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 		}
 	}
 
+	//从远程 ResultSubPartition 获取数据，被InputGate调用；
 	@Override
 	Optional<BufferAndAvailability> getNextBuffer() throws IOException {
 		checkState(!isReleased.get(), "Queried for a buffer after channel has been closed.");
@@ -300,6 +311,7 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 	 *
 	 * @param segment The exclusive segment of this channel.
 	 */
+	//独占的 buffer 释放后会直接被 RemoteInputChannel 回收
 	@Override
 	public void recycle(MemorySegment segment) {
 		int numAddedBuffers;
@@ -308,13 +320,16 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 			// Important: check the isReleased state inside synchronized block, so there is no
 			// race condition when recycle and releaseAllResources running in parallel.
 			if (isReleased.get()) {
+				//如果这个 channle 已经被释放
 				try {
+					//这个 MemorySegment 会被归还给 NetworkBufferPool
 					inputGate.returnExclusiveSegments(Collections.singletonList(segment));
 					return;
 				} catch (Throwable t) {
 					ExceptionUtils.rethrow(t);
 				}
 			}
+			//重新加入到 AvailableBufferQueue 中
 			numAddedBuffers = bufferQueue.addExclusiveBuffer(new NetworkBuffer(segment, this), numRequiredBuffers);
 		}
 
@@ -591,14 +606,16 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 	/**
 	 * Manages the exclusive and floating buffers of this channel, and handles the
 	 * internal buffer related logic.
+	 *
+	 * buffer资源池，包含两部分：1.当前这个channel独享的，2.一个input gate中所有channel共享的；
 	 */
 	private static class AvailableBufferQueue {
 
 		/** The current available floating buffers from the fixed buffer pool. */
-		private final ArrayDeque<Buffer> floatingBuffers;
+		private final ArrayDeque<Buffer> floatingBuffers; //这部分是流动的
 
 		/** The current available exclusive buffers from the global buffer pool. */
-		private final ArrayDeque<Buffer> exclusiveBuffers;
+		private final ArrayDeque<Buffer> exclusiveBuffers;  //这部分是独占的
 
 		AvailableBufferQueue() {
 			this.exclusiveBuffers = new ArrayDeque<>();
@@ -614,17 +631,21 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 		 *
 		 * @return How many buffers were added to the queue
 		 */
+		//添加一个独占的buffer，如果当前可用的 buffer 总量超出了要求的数量，则向本地缓冲池归还一个流动的buffer
+		//返回值是新增的 buffer 数量
 		int addExclusiveBuffer(Buffer buffer, int numRequiredBuffers) {
 			exclusiveBuffers.add(buffer);
-			if (getAvailableBufferSize() > numRequiredBuffers) {
+			if (getAvailableBufferSize() > numRequiredBuffers) {   //如果当前可用的 buffer 总量超出了要求的数量
 				Buffer floatingBuffer = floatingBuffers.poll();
-				floatingBuffer.recycleBuffer();
+				floatingBuffer.recycleBuffer(); 		//向本地缓冲池归还一个流动的buffer
+				//加一个，归还一个，相当于没加
 				return 0;
 			} else {
 				return 1;
 			}
 		}
 
+		//添加一个流动(共享)的buffer
 		void addFloatingBuffer(Buffer buffer) {
 			floatingBuffers.add(buffer);
 		}
@@ -636,6 +657,7 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 		 * @return An available floating or exclusive buffer, may be null
 		 * if the channel is released.
 		 */
+		//优先取流动的buffer
 		@Nullable
 		Buffer takeBuffer() {
 			if (floatingBuffers.size() > 0) {

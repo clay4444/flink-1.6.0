@@ -159,7 +159,7 @@ public class SingleInputGate implements InputGate {
 	 * from this pool.
 	 */
 	//用于接收输入的缓冲池
-	private BufferPool bufferPool;
+	private BufferPool bufferPool; //这是所有 input channel 共享的buffer pool 资源池；  每个channel独享的已经直接分配给channel了；
 
 	/** Global network buffer pool to request and recycle exclusive buffers (only for credit-based). */
 	//全局网络缓冲池
@@ -283,6 +283,7 @@ public class SingleInputGate implements InputGate {
 	// Setup/Life-cycle
 	// ------------------------------------------------------------------------
 
+	//分配 LocalBufferPool 本地缓冲池，这是所有 input channel 共享的
 	public void setBufferPool(BufferPool bufferPool) {
 		checkState(this.bufferPool == null, "Bug in input gate setup logic: buffer pool has" +
 			"already been set for this input gate.");
@@ -296,6 +297,7 @@ public class SingleInputGate implements InputGate {
 	 * @param networkBufferPool The global pool to request and recycle exclusive buffers
 	 * @param networkBuffersPerChannel The number of exclusive buffers for each channel
 	 */
+	//分配独占的资源
 	public void assignExclusiveSegments(NetworkBufferPool networkBufferPool, int networkBuffersPerChannel) throws IOException {
 		checkState(this.isCreditBased, "Bug in input gate setup logic: exclusive buffers only exist with credit-based flow control.");
 		checkState(this.networkBufferPool == null, "Bug in input gate setup logic: global buffer pool has" +
@@ -305,8 +307,9 @@ public class SingleInputGate implements InputGate {
 		this.networkBuffersPerChannel = networkBuffersPerChannel;
 
 		synchronized (requestLock) {
-			for (InputChannel inputChannel : inputChannels.values()) {
+			for (InputChannel inputChannel : inputChannels.values()) {  //为每个input channel分配独占的资源
 				if (inputChannel instanceof RemoteInputChannel) {
+					//RemoteInputChannel 请求独占的 buffer
 					((RemoteInputChannel) inputChannel).assignExclusiveSegments(
 						networkBufferPool.requestMemorySegments(networkBuffersPerChannel));
 				}

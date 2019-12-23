@@ -61,6 +61,8 @@ class NettyClient {
 		this.config = config;
 	}
 
+	//初始化，在ConnectionManager的start方法中调用；
+	//和NettyServer不同的是，只是配置了引导了EventLoop，(还做了一些简单的配置)，并没有建立连接的步骤；
 	void init(final NettyProtocol protocol, NettyBufferPool nettyBufferPool) throws IOException {
 		checkState(bootstrap == null, "Netty client has already been initialized.");
 
@@ -68,15 +70,16 @@ class NettyClient {
 
 		final long start = System.nanoTime();
 
-		bootstrap = new Bootstrap();
+		bootstrap = new Bootstrap();  //1.创建客户端引导
 
 		// --------------------------------------------------------------------
 		// Transport-specific configuration
 		// --------------------------------------------------------------------
 
+		//2. 根据配置选择需要绑定的 EventLoop
 		switch (config.getTransportType()) {
 			case NIO:
-				initNioBootstrap();
+				initNioBootstrap();  //选择使用NioEventLoopGroup
 				break;
 
 			case EPOLL:
@@ -94,6 +97,7 @@ class NettyClient {
 				}
 		}
 
+		//3.做了一些配置；
 		// --------------------------------------------------------------------
 		// Configuration
 		// --------------------------------------------------------------------
@@ -168,6 +172,7 @@ class NettyClient {
 	// Client connections
 	// ------------------------------------------------------------------------
 
+	//最终建立连接还是在这里实现的；
 	ChannelFuture connect(final InetSocketAddress serverSocketAddress) {
 		checkState(bootstrap != null, "Client has not been initialized yet.");
 
@@ -187,7 +192,7 @@ class NettyClient {
 
 					channel.pipeline().addLast("ssl", new SslHandler(sslEngine));
 				}
-				channel.pipeline().addLast(protocol.getClientChannelHandlers());
+				channel.pipeline().addLast(protocol.getClientChannelHandlers());  //往 ChannelPipline 中 添加 Channel Handler
 			}
 		});
 
