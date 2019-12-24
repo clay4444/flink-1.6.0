@@ -135,7 +135,9 @@ import java.util.Optional;
  *  	3.1 PartitionRequestServerHandler 用来接收PartitionRequest，然后构建一个CreditBasedSequenceNumberingViewReader，简称reader，reader负责连接这个request要请求的ResultSubPartitionView，并且在~View中有数据时收到通知；
  *  	3.2 PartitionRequestQueue 用来监听chnnel的状态，当可写入时，就从上述的reader中取出数据并写入到channel中(发送给客户端)
  *  	3.3 这两个handler之间通过一个队列来连接，即PartitionRequestQueue#availableReaders，reader中有数据时，写入这个队列，作为生产者，PartitionRequestQueue监听到channel可写时，也是从这个队列中消费，作为消费者；
- *  	3.4
+ *  	3.4 详细的源码分析在内两个具体的类中
+ *  4.消费者的处理流程，
+ *
  *
  *
  */
