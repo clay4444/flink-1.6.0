@@ -117,6 +117,7 @@ public class PartitionRequestClient {
 		clientHandler.addInputChannel(inputChannel);
 
 		//要发送的request请求
+		//PartitionRequest封装了请求的 sub-partition 的信息，当前 input channel 的 ID，以及初始 credit
 		final PartitionRequest request = new PartitionRequest(
 				partitionId, subpartitionIndex, inputChannel.getInputChannelId(), inputChannel.getInitialCredit());
 

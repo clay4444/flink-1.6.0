@@ -130,8 +130,13 @@ import java.util.Optional;
  *
  * 具体实现：(详细的源码解析在相应的实现类中)
  *  1.初始化：Task刚启动时向NetworkEnvironment注册Task，然后setupInputGate()为Task的输入配置buffer资源，资源又分为独占的共享的，这两种资源都放进了RemoteInputChannel的 AvailableBufferQueue 这个容器中；
- *  2.请求远端子分区，上面已经解析过了，也可以看 RemoteInputChannel#requestSubpartition() 源码
- *  3.生产端的处理流程，
+ *  2.请求远端子分区，上面已经解析过了，也可以看 RemoteInputChannel#requestSubpartition() 源码， 核心是通过NettyClient发送PartitionRequest请求，
+ *  3.生产端的处理流程，主要是两个handler:
+ *  	3.1 PartitionRequestServerHandler 用来接收PartitionRequest，然后构建一个CreditBasedSequenceNumberingViewReader，简称reader，reader负责连接这个request要请求的ResultSubPartitionView，并且在~View中有数据时收到通知；
+ *  	3.2 PartitionRequestQueue 用来监听chnnel的状态，当可写入时，就从上述的reader中取出数据并写入到channel中(发送给客户端)
+ *  	3.3 这两个handler之间通过一个队列来连接，即PartitionRequestQueue#availableReaders，reader中有数据时，写入这个队列，作为生产者，PartitionRequestQueue监听到channel可写时，也是从这个队列中消费，作为消费者；
+ *  	3.4
+ *
  *
  */
 public interface InputGate {

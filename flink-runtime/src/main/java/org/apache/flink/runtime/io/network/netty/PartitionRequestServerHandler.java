@@ -92,7 +92,13 @@ class PartitionRequestServerHandler extends SimpleChannelInboundHandler<NettyMes
 				LOG.debug("Read channel on {}: {}.", ctx.channel().localAddress(), request);
 
 				try {
-					NetworkSequenceViewReader reader;   //1. 创建了一个NetworkSequenceViewReader 对象
+					/**
+					 * 1. 创建了一个 NetworkSequenceViewReader 对象，它相当于对 ResultSubpartitionView 的一层包装，
+					 * 她会按顺序为读取的每一个 buffer 分配一个序列号，并且记录了接收数据的 RemoteInputChannel 的 ID。
+					 * 在使用 Credit-based Flow Control 的情况下，NetworkSequenceViewReader 的具体实现对应为 CreditBasedSequenceNumberingViewReader。
+					 * CreditBasedSequenceNumberingViewReader 同时还实现了 BufferAvailabilityListener 接口，因而可以作为 PipelinedSubpartitionView 的回调对象(也就是说当上游的ResultSubpartitionView有数据产生时，会通知这个类)
+					 */
+					NetworkSequenceViewReader reader;
 					if (creditBasedEnabled) {
 						reader = new CreditBasedSequenceNumberingViewReader(
 							request.receiverId,
@@ -110,7 +116,7 @@ class PartitionRequestServerHandler extends SimpleChannelInboundHandler<NettyMes
 						request.partitionId,
 						request.queueIndex);
 
-					outboundQueue.notifyReaderCreated(reader);
+					outboundQueue.notifyReaderCreated(reader); //3. 把创建的Reader放入了另外一个 channel handler
 				} catch (PartitionNotFoundException notFound) {
 					respondWithError(ctx, notFound, request.receiverId);
 				}
@@ -130,10 +136,11 @@ class PartitionRequestServerHandler extends SimpleChannelInboundHandler<NettyMes
 				outboundQueue.cancel(request.receiverId);
 			} else if (msgClazz == CloseRequest.class) {
 				outboundQueue.close();
-			} else if (msgClazz == AddCredit.class) {
+			} else if (msgClazz == AddCredit.class) {  //消费者可以消费更多数据了；
+				//增加 credit
 				AddCredit request = (AddCredit) msg;
 
-				outboundQueue.addCredit(request.receiverId, request.credit);
+				outboundQueue.addCredit(request.receiverId, request.credit);  //增加信用
 			} else {
 				LOG.warn("Received unexpected client request: {}", msg);
 			}

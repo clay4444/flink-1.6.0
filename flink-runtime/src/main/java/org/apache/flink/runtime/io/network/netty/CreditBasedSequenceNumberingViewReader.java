@@ -36,6 +36,9 @@ import java.io.IOException;
  *
  * <p>It also keeps track of available buffers and notifies the outbound
  * handler about non-emptiness, similar to the {@link LocalInputChannel}.
+ * <p>
+ * 这个类相当于对 ResultSubpartitionView 的一层包装，她会按顺序为读取的每一个 buffer 分配一个序列号，并且记录了接收数据的 RemoteInputChannel 的 ID。
+ * 它实现了 BufferAvailabilityListener 接口，因而可以作为 PipelinedSubpartitionView 的回调对象 (也就是说当上游的ResultSubpartitionView有数据产生时，会通知这个类)
  */
 class CreditBasedSequenceNumberingViewReader implements BufferAvailabilityListener, NetworkSequenceViewReader {
 
@@ -43,8 +46,10 @@ class CreditBasedSequenceNumberingViewReader implements BufferAvailabilityListen
 
 	private final InputChannelID receiverId;
 
+	//要赋给的另外一个 channel handler
 	private final PartitionRequestQueue requestQueue;
 
+	//消费 ResultSubpartition 的数据，并在 ResultSubpartition 有数据可用时获得通知
 	private volatile ResultSubpartitionView subpartitionView;
 
 	/**
@@ -56,21 +61,27 @@ class CreditBasedSequenceNumberingViewReader implements BufferAvailabilityListen
 	 */
 	private boolean isRegisteredAsAvailable = false;
 
-	/** The number of available buffers for holding data on the consumer side. */
+	/**
+	 * The number of available buffers for holding data on the consumer side.
+	 */
+	//numCreditsAvailable的值是消费端还能够容纳的buffer的数量，也就是允许生产端发送的buffer的数量
 	private int numCreditsAvailable;
 
 	private int sequenceNumber = -1;
 
+	//构造器
 	CreditBasedSequenceNumberingViewReader(
-			InputChannelID receiverId,
-			int initialCredit,
-			PartitionRequestQueue requestQueue) {
+		InputChannelID receiverId,
+		int initialCredit,
+		PartitionRequestQueue requestQueue) {
 
 		this.receiverId = receiverId;
 		this.numCreditsAvailable = initialCredit;
 		this.requestQueue = requestQueue;
 	}
 
+	//NettyServer接收到client的PartitionRequest请求之后，调用这个方法，来连接这个请求要消费的 ResultSubPartitionView，
+	//这个是我们之前熟悉的，ResultSubPartitionView是用来消费对应的ResultSubPartition的数据的，
 	@Override
 	public void requestSubpartitionView(
 		ResultPartitionProvider partitionProvider,
@@ -83,19 +94,20 @@ class CreditBasedSequenceNumberingViewReader implements BufferAvailabilityListen
 				// schedule a separate task at the event loop that will
 				// start consuming this. Otherwise the reference to the
 				// view cannot be available in getNextBuffer().
-				this.subpartitionView = partitionProvider.createSubpartitionView(
+				this.subpartitionView = partitionProvider.createSubpartitionView(  //其实最终还是调用的 ResultPartitionManager#createSubpartitionView
 					resultPartitionId,
 					subPartitionIndex,
-					this);
+					this);//自身充当监听器，当连接的SubpartitionView有数据写入时，会回调 notifyDataAvailable() 方法
 			} else {
 				throw new IllegalStateException("Subpartition already requested");
 			}
 		}
 	}
 
+	//加信用，代表客户端可以消费的数据变多了；
 	@Override
 	public void addCredit(int creditDeltas) {
-		numCreditsAvailable += creditDeltas;
+		numCreditsAvailable += creditDeltas;  //可用信用增加
 	}
 
 	@Override
@@ -112,10 +124,15 @@ class CreditBasedSequenceNumberingViewReader implements BufferAvailabilityListen
 	 * Returns true only if the next buffer is an event or the reader has both available
 	 * credits and buffers.
 	 */
+
+	//是否还可以消费数据：
+	// 1. ResultSubpartition 中有更多的数据
+	// 2. credit > 0 或者下一条数据是事件(事件不需要消耗credit)
 	@Override
 	public boolean isAvailable() {
 		// BEWARE: this must be in sync with #isAvailable(BufferAndBacklog)!
 		return hasBuffersAvailable() &&
+			//要求 numCreditsAvailable > 0 或者是 Event
 			(numCreditsAvailable > 0 || subpartitionView.nextBufferIsEvent());
 	}
 
@@ -126,9 +143,10 @@ class CreditBasedSequenceNumberingViewReader implements BufferAvailabilityListen
 	 * <p>Returns true only if the next buffer is an event or the reader has both available
 	 * credits and buffers.
 	 *
-	 * @param bufferAndBacklog
-	 * 		current buffer and backlog including information about the next buffer
+	 * @param bufferAndBacklog current buffer and backlog including information about the next buffer
 	 */
+
+	//和上面 isAvailable() 是等价的
 	private boolean isAvailable(BufferAndBacklog bufferAndBacklog) {
 		// BEWARE: this must be in sync with #isAvailable()!
 		return bufferAndBacklog.isMoreAvailable() &&
@@ -155,13 +173,16 @@ class CreditBasedSequenceNumberingViewReader implements BufferAvailabilityListen
 		return subpartitionView.isAvailable();
 	}
 
+
+	//读取数据
 	@Override
 	public BufferAndAvailability getNextBuffer() throws IOException, InterruptedException {
-		BufferAndBacklog next = subpartitionView.getNextBuffer();
+		BufferAndBacklog next = subpartitionView.getNextBuffer();  //直接从 subpartitionView 中读取数据
 		if (next != null) {
-			sequenceNumber++;
+			sequenceNumber++;  //序列号
 
-			if (next.buffer().isBuffer() && --numCreditsAvailable < 0) {
+			//要发送一个buffer，对应的 numCreditsAvailable 要减 1
+			if (next.buffer().isBuffer() && --numCreditsAvailable < 0) {  // >>>>>>>>>>>> 整个算法的核心在这里可以看到，当没有信用值了，即使上游 ResultSubPartitionView 中有数据buffer，也不会往下游发；
 				throw new IllegalStateException("no credit available");
 			}
 
@@ -192,9 +213,12 @@ class CreditBasedSequenceNumberingViewReader implements BufferAvailabilityListen
 		subpartitionView.releaseAllResources();
 	}
 
+	/**
+	 * 当这个类连接的上游 ResultSubPartitionView 开始产生数据的时候，会回调这个方法，
+	 */
 	@Override
 	public void notifyDataAvailable() {
-		requestQueue.notifyReaderNonEmpty(this);
+		requestQueue.notifyReaderNonEmpty(this);   //然后通知另外一个channel handler，这个reader对应的 ResultSubPartitionView 开始产生数据了；
 	}
 
 	@Override
