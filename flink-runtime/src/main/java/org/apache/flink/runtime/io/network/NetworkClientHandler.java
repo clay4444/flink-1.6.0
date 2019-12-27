@@ -43,5 +43,6 @@ public interface NetworkClientHandler extends ChannelHandler {
 	 *
 	 * @param inputChannel The input channel with unannounced credits.
 	 */
+	//通知有新的的 credit 可用
 	void notifyCreditAvailable(final RemoteInputChannel inputChannel);
 }

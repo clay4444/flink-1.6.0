@@ -23,6 +23,8 @@ import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 
 /**
  * A {@link StreamOperator} for executing {@link FlatMapFunction FlatMapFunctions}.
+ *
+ * 一个 operator
  */
 @Internal
 public class StreamFlatMap<IN, OUT>
@@ -41,7 +43,7 @@ public class StreamFlatMap<IN, OUT>
 	@Override
 	public void open() throws Exception {
 		super.open();
-		collector = new TimestampedCollector<>(output);
+		collector = new TimestampedCollector<>(output);  //看这里，  output，
 	}
 
 	@Override

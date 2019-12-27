@@ -83,6 +83,9 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  * 在底层通过RecordWriterOutput来实现。另外，框中的虚线是operator chain内部的数据流，
  * 这个流内的数据不会经过序列化/反序列化、网络传输，而是直接将消息对象传递给下游的 ChainOperator 处理，这是性能提升的关键点，
  * 在底层是通过 ChainingOutput 这个内部类 实现的，源码如下方所示，
+ *
+ *
+ * 一个 Task 运行期间的主要处理逻辑对应一个 OperatorChain，这个 OperatorChain 可能包含多个 Operator，也可能只有一个 Operator。
  */
 @Internal
 public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements StreamStatusMaintainer {
@@ -435,6 +438,8 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 	 * An {@link Output} that measures the last emitted watermark with a {@link WatermarkGauge}.
 	 *
 	 * @param <T> The type of the elements that can be emitted.
+	 *
+	 *           它主要是额外提供了一个获取 watermark 值的方法：
 	 */
 	public interface WatermarkGaugeExposingOutput<T> extends Output<T> {
 		Gauge<Long> getWatermarkGauge();
@@ -442,12 +447,13 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 
 	/**
 	 * 两个subtask chain成一个task的具体实现，
+	 * 实现了上面的接口，上面的接口又继承了Output，Output的作用是收集当前算子的计算结果，往下游发送，
 	 * @param <T>
 	 */
 	static class ChainingOutput<T> implements WatermarkGaugeExposingOutput<StreamRecord<T>> {
 
-		// 注册的下游operator
-		protected final OneInputStreamOperator<T, ?> operator;
+		//当前算子的下游算子
+		protected final OneInputStreamOperator<T, ?> operator;  //保存了下游算子的引用
 		protected final Counter numRecordsIn;
 		protected final WatermarkGauge watermarkGauge = new WatermarkGauge();
 
@@ -460,7 +466,7 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 				OneInputStreamOperator<T, ?> operator,
 				StreamStatusProvider streamStatusProvider,
 				@Nullable OutputTag<T> outputTag) {
-			this.operator = operator;
+			this.operator = operator;  //下游算子
 
 			{
 				Counter tmpNumRecordsIn;
@@ -478,6 +484,7 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 			this.outputTag = outputTag;
 		}
 
+		//OutPut接口中定义的核心方法：如何给下游发送数据
 		//数据处理完，直接发送出去，直接发给下游，不用经过序列化，网络传输等阶段
 		@Override
 		public void collect(StreamRecord<T> record) {
@@ -486,11 +493,12 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 				return;
 			}
 
-			pushToOperator(record);
+			pushToOperator(record); // 这里
 		}
 
 		@Override
 		public <X> void collect(OutputTag<X> outputTag, StreamRecord<X> record) {
+			//如果有 OutputTag， 则要求 OutputTag 匹配才会转发记录
 			if (this.outputTag == null || !this.outputTag.equals(outputTag)) {
 				// we are only responsible for emitting to the side-output specified by our
 				// OutputTag.
@@ -511,7 +519,7 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 				numRecordsIn.inc();
 				operator.setKeyContextElement1(castRecord);
 				//下游算子直接处理，
-				operator.processElement(castRecord);
+				operator.processElement(castRecord);  //<<<<<< 重要：直接将调用下游算子的 processElement 方法:
 			}
 			catch (Exception e) {
 				throw new ExceptionInChainedOperatorException(e);

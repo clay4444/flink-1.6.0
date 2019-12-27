@@ -31,6 +31,8 @@ import org.apache.flink.util.OutputTag;
  * and watermarks, from an operator.
  *
  * @param <T> The type of the elements that can be emitted.
+ *
+ * Output 接口继承自 Collector 接口，用于往外推送 Operator 处理完的数据:
  */
 @PublicEvolving
 public interface Output<T> extends Collector<T> {
@@ -48,6 +50,8 @@ public interface Output<T> extends Collector<T> {
 	 * Emits a record the side output identified by the given {@link OutputTag}.
 	 *
 	 * @param record The record to collect.
+	 *
+	 * 核心方法：往下游发送数据；
 	 */
 	<X> void collect(OutputTag<X> outputTag, StreamRecord<X> record);
 

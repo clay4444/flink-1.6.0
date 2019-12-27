@@ -183,6 +183,10 @@ public class PartitionRequestClient {
 						});
 	}
 
+	/**
+	 * remote input channel 除了接收到server端返回的buffer之外，还会返回一个backlog，代表当前生产端累积的数目，
+	 * 消费者会根据这个backlog值，判断当前buffer资源是否足够，不够的话就继续向bufferpool申请，申请完了需要告诉生产端资源(信用值)增加了，下次生产者就可以发送更多数据了
+	 */
 	public void notifyCreditAvailable(RemoteInputChannel inputChannel) {
 		// We should skip the notification if the client is already closed.
 		if (!closeReferenceCounter.isDisposed()) {

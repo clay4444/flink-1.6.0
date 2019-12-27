@@ -23,6 +23,8 @@ import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 
 /**
  * A {@link StreamOperator} for executing {@link MapFunction MapFunctions}.
+ *
+ * 每一个 StreamOperator 都有一个 Output 成员，用于收集当前算子处理完的记录，比如在 StreamMap 中：
  */
 @Internal
 public class StreamMap<IN, OUT>
@@ -38,6 +40,6 @@ public class StreamMap<IN, OUT>
 
 	@Override
 	public void processElement(StreamRecord<IN> element) throws Exception {
-		output.collect(element.replace(userFunction.map(element.getValue())));
+		output.collect(element.replace(userFunction.map(element.getValue())));  // <<<< 这里，output
 	}
 }

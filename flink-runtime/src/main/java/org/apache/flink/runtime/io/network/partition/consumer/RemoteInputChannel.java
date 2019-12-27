@@ -296,11 +296,14 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 	/**
 	 * Enqueue this input channel in the pipeline for notifying the producer of unannounced credit.
 	 */
+
+	//需要通知生产端有新的信用值可用了；
 	private void notifyCreditAvailable() {
 		checkState(partitionRequestClient != null, "Tried to send task event to producer before requesting a queue.");
 
 		// We should skip the notification if this channel is already released.
 		if (!isReleased.get()) {
+			//通知当前 channel 有新的 credit
 			partitionRequestClient.notifyCreditAvailable(this);
 		}
 	}
@@ -366,6 +369,8 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 	 * @param buffer Buffer that becomes available in buffer pool.
 	 * @return True when this channel is waiting for more floating buffers, otherwise false.
 	 */
+
+	//LocalBufferPool 通知有 buffer 可用
 	@Override
 	public boolean notifyBufferAvailable(Buffer buffer) {
 		// Check the isReleased state outside synchronized block first to avoid
@@ -392,11 +397,13 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 				}
 
 				recycleBuffer = false;
-				bufferQueue.addFloatingBuffer(buffer);
+				bufferQueue.addFloatingBuffer(buffer);  //增加floating buffer
 
 				if (bufferQueue.getAvailableBufferSize() == numRequiredBuffers) {
-					isWaitingForFloatingBuffers = false;
+					//bufferQueue中有足够多的 buffer 了
+					isWaitingForFloatingBuffers = false; //终止请求
 				} else {
+					//bufferQueue 中 buffer 仍然不足
 					needMoreBuffers = true;
 				}
 
@@ -494,6 +501,10 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 	 *
 	 * @param backlog The number of unsent buffers in the producer's sub partition.
 	 */
+
+	//backlog 是发送端的堆积 的 buffer 数量，
+	//如果 bufferQueue 中 buffer 的数量不足，就去须从 LocalBufferPool 中请求 floating buffer
+	//在请求了新的 buffer 后，通知生产者有 credit 可用
 	void onSenderBacklog(int backlog) throws IOException {
 		int numRequestedBuffers = 0;
 
@@ -504,13 +515,18 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 				return;
 			}
 
+			//需要的 buffer 数量是 backlog + initialCredit, backlog 是生产者当前的积压
 			numRequiredBuffers = backlog + initialCredit;
 			while (bufferQueue.getAvailableBufferSize() < numRequiredBuffers && !isWaitingForFloatingBuffers) {
+				//不停地请求新的 floating buffer
 				Buffer buffer = inputGate.getBufferPool().requestBuffer();
 				if (buffer != null) {
+					//从 buffer poll 中请求到 buffer
 					bufferQueue.addFloatingBuffer(buffer);
 					numRequestedBuffers++;
 				} else if (inputGate.getBufferProvider().addBufferListener(this)) {
+					// buffer pool 没有 buffer 了，加一个监听，当 LocalBufferPool 中有新的 buffer 时会回调 notifyBufferAvailable
+
 					// If the channel has not got enough buffers, register it as listener to wait for more floating buffers.
 					isWaitingForFloatingBuffers = true;
 					break;
@@ -519,23 +535,30 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 		}
 
 		if (numRequestedBuffers > 0 && unannouncedCredit.getAndAdd(numRequestedBuffers) == 0) {
+			//请求了新的floating buffer，要更新 credit
 			notifyCreditAvailable();
 		}
 	}
 
+	/**
+	 * 当NettyServer返回数据时，CreditBasedPartitionRequestClientHandler 这个handler用来处理返回的数据，然后回调这个方法
+	 * buffer是具体数据，sequenceNumber是bufferID，生产者会给每一条数据编码一个id，backlog是生产者端堆积的消息数量；
+	 */
 	public void onBuffer(Buffer buffer, int sequenceNumber, int backlog) throws IOException {
 		boolean success = false;
 
 		try {
 			synchronized (receivedBuffers) {
 				if (!isReleased.get()) {
+					//序号需要匹配
 					if (expectedSequenceNumber == sequenceNumber) {
 						int available = receivedBuffers.size();
 
-						receivedBuffers.add(buffer);
-						expectedSequenceNumber++;
+						receivedBuffers.add(buffer);  // >>>>>>>>> 这里，加入 receivedBuffers 队列中
+						expectedSequenceNumber++;  //期待的序号+1
 
 						if (available == 0) {
+							//通知 InputGate，当前 channel 有新数据了，然后加入到 SingleInputGate 中的 inputChannelsWithData 这个队列中；(生产者/消费者)
 							notifyChannelNonEmpty();
 						}
 
@@ -547,6 +570,7 @@ public class RemoteInputChannel extends InputChannel implements BufferRecycler, 
 			}
 
 			if (success && backlog >= 0) {
+				//根据客户端的积压申请 float buffer
 				onSenderBacklog(backlog);
 			}
 		} finally {

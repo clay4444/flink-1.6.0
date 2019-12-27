@@ -595,6 +595,9 @@ public class StreamingJobGraphGenerator {
 		}
 	}
 
+	/**
+	 * @param edge   这个边连接的两个节点是否能chain到一起
+	 */
 	public static boolean isChainable(StreamEdge edge, StreamGraph streamGraph) {
 		StreamNode upStreamVertex = edge.getSourceVertex();
 		StreamNode downStreamVertex = edge.getTargetVertex();
@@ -602,16 +605,16 @@ public class StreamingJobGraphGenerator {
 		StreamOperator<?> headOperator = upStreamVertex.getOperator();
 		StreamOperator<?> outOperator = downStreamVertex.getOperator();
 
-		return downStreamVertex.getInEdges().size() == 1
+		return downStreamVertex.getInEdges().size() == 1     //下游节点只有一个输入
 				&& outOperator != null
 				&& headOperator != null
-				&& upStreamVertex.isSameSlotSharingGroup(downStreamVertex)
-				&& outOperator.getChainingStrategy() == ChainingStrategy.ALWAYS
+				&& upStreamVertex.isSameSlotSharingGroup(downStreamVertex)   		//在同一个 slot 共享组中
+				&& outOperator.getChainingStrategy() == ChainingStrategy.ALWAYS  	//上下游算子的 chainning 策略，要允许 chainning
 				&& (headOperator.getChainingStrategy() == ChainingStrategy.HEAD ||
 					headOperator.getChainingStrategy() == ChainingStrategy.ALWAYS)
-				&& (edge.getPartitioner() instanceof ForwardPartitioner)
-				&& upStreamVertex.getParallelism() == downStreamVertex.getParallelism()
-				&& streamGraph.isChainingEnabled();
+				&& (edge.getPartitioner() instanceof ForwardPartitioner)            //上下游算子之间的数据传输方式必须是FORWARD，而不能是REBALANCE等其它模式
+				&& upStreamVertex.getParallelism() == downStreamVertex.getParallelism() //上下游算子的并行度要一致
+				&& streamGraph.isChainingEnabled();  								// StreamExecutionEnvironment 配置允许 chainning
 	}
 
 	private void setSlotSharingAndCoLocation() {

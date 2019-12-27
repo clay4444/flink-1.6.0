@@ -54,12 +54,16 @@ import java.util.concurrent.atomic.AtomicReference;
  * producer, to write and flush the unannounced credits for the producer.
  *
  * <p>It is used in the new network credit-based mode.
+ *
+ * NettyClient 对应的channel handler，
+ * 负责接收服务端通过 Netty channel 发送的数据，解析数据后交给对应的 RemoteInputChannle 进行处理：
  */
 class CreditBasedPartitionRequestClientHandler extends ChannelInboundHandlerAdapter implements NetworkClientHandler {
 
 	private static final Logger LOG = LoggerFactory.getLogger(CreditBasedPartitionRequestClientHandler.class);
 
 	/** Channels, which already requested partitions from the producers. */
+	//所有已经请求远端 ResultSubPartition 的 inputChannel
 	private final ConcurrentMap<InputChannelID, RemoteInputChannel> inputChannels = new ConcurrentHashMap<>();
 
 	/** Channels, which will notify the producers about unannounced credit. */
@@ -85,6 +89,7 @@ class CreditBasedPartitionRequestClientHandler extends ChannelInboundHandlerAdap
 	// Input channel/receiver registration
 	// ------------------------------------------------------------------------
 
+	//PartitionRequestClient调用requestSubpartition请求远端subPartition之前，会调用这个方法，也就是告诉这个handler，这个 input channel 已经请求远端分区了，后续可能有它的返回数据
 	@Override
 	public void addInputChannel(RemoteInputChannel listener) throws IOException {
 		checkError();
@@ -99,6 +104,7 @@ class CreditBasedPartitionRequestClientHandler extends ChannelInboundHandlerAdap
 		inputChannels.remove(listener.getInputChannelId());
 	}
 
+	//取消对给定 receiverId 的订阅
 	@Override
 	public void cancelRequestFor(InputChannelID inputChannelId) {
 		if (inputChannelId == null || ctx == null) {
@@ -106,17 +112,19 @@ class CreditBasedPartitionRequestClientHandler extends ChannelInboundHandlerAdap
 		}
 
 		if (cancelled.putIfAbsent(inputChannelId, inputChannelId) == null) {
-			ctx.writeAndFlush(new NettyMessage.CancelPartitionRequest(inputChannelId));
+			ctx.writeAndFlush(new NettyMessage.CancelPartitionRequest(inputChannelId)); //发送一个取消PartitionRequest的请求
 		}
 	}
 
+	//通知生产端(NettyServer)，消费端已经申请了更多的buffer(信用)来接收上游数据
 	@Override
 	public void notifyCreditAvailable(final RemoteInputChannel inputChannel) {
+		//有新的credit
 		ctx.executor().execute(new Runnable() {
 			@Override
 			public void run() {
 				ctx.pipeline().fireUserEventTriggered(inputChannel);
-			}
+			}  //触发用户事件，跳到 userEventTriggered() 方法
 		});
 	}
 
@@ -176,9 +184,14 @@ class CreditBasedPartitionRequestClientHandler extends ChannelInboundHandlerAdap
 		}
 	}
 
+	/**
+	 * channel可读(收到了NettyServer返回的数据)时的回调方法
+	 */
 	@Override
 	public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
+		//从netty channel中接收到数据
 		try {
+			//解析消息
 			decodeMsg(msg);
 		} catch (Throwable t) {
 			notifyAllChannelsOfErrorAndClose(t);
@@ -191,15 +204,19 @@ class CreditBasedPartitionRequestClientHandler extends ChannelInboundHandlerAdap
 	 * <p>Enqueues the input channel and will trigger write&flush unannounced credits
 	 * for this input channel if it is the first one in the queue.
 	 */
+
+	//触发用户事件，主要是给NettyServer发送一条消息(信用值增加了)
 	@Override
 	public void userEventTriggered(ChannelHandlerContext ctx, Object msg) throws Exception {
 		if (msg instanceof RemoteInputChannel) {
+			//有新的credit会触发
 			boolean triggerWrite = inputChannelsWithCredit.isEmpty();
 
+			//加入到队列中
 			inputChannelsWithCredit.add((RemoteInputChannel) msg);
 
 			if (triggerWrite) {
-				writeAndFlushNextMessageIfPossible(ctx.channel());
+				writeAndFlushNextMessageIfPossible(ctx.channel()); //这里，给server发送消息
 			}
 		} else {
 			ctx.fireUserEventTriggered(msg);
@@ -208,7 +225,7 @@ class CreditBasedPartitionRequestClientHandler extends ChannelInboundHandlerAdap
 
 	@Override
 	public void channelWritabilityChanged(ChannelHandlerContext ctx) throws Exception {
-		writeAndFlushNextMessageIfPossible(ctx.channel());
+		writeAndFlushNextMessageIfPossible(ctx.channel()); //这里
 	}
 
 	private void notifyAllChannelsOfErrorAndClose(Throwable cause) {
@@ -248,22 +265,29 @@ class CreditBasedPartitionRequestClientHandler extends ChannelInboundHandlerAdap
 		}
 	}
 
+	/**
+	 * 解码从 NettyServer 返回的数据
+	 */
 	private void decodeMsg(Object msg) throws Throwable {
 		final Class<?> msgClazz = msg.getClass();
 
 		// ---- Buffer --------------------------------------------------------
 		if (msgClazz == NettyMessage.BufferResponse.class) {
+			//正常的数据
 			NettyMessage.BufferResponse bufferOrEvent = (NettyMessage.BufferResponse) msg;
 
+			//根据 ID 定位到当前数据是返回给哪个 RemoteInputChannel的 (也就是确定是哪个 RemoteInputChannel 请求的返回数据)
 			RemoteInputChannel inputChannel = inputChannels.get(bufferOrEvent.receiverId);
 			if (inputChannel == null) {
+				//如果没有对应的 RemoteInputChannel
 				bufferOrEvent.releaseBuffer();
 
+				//取消对给定 receiverId 的订阅
 				cancelRequestFor(bufferOrEvent.receiverId);
 
 				return;
 			}
-
+			//解析消息，是buffer还是event
 			decodeBufferOrEvent(inputChannel, bufferOrEvent);
 
 		} else if (msgClazz == NettyMessage.ErrorResponse.class) {
@@ -296,6 +320,9 @@ class CreditBasedPartitionRequestClientHandler extends ChannelInboundHandlerAdap
 		}
 	}
 
+	/**
+	 * 解析Netty返回的消息，是buffer还是event
+	 */
 	private void decodeBufferOrEvent(RemoteInputChannel inputChannel, NettyMessage.BufferResponse bufferOrEvent) throws Throwable {
 		try {
 			ByteBuf nettyBuffer = bufferOrEvent.getNettyBuffer();
@@ -310,10 +337,13 @@ class CreditBasedPartitionRequestClientHandler extends ChannelInboundHandlerAdap
 					return;
 				}
 
+				//从对应的 RemoteInputChannel 中请求一个 Buffer
 				Buffer buffer = inputChannel.requestBuffer();
 				if (buffer != null) {
+					//将接收的数据写入buffer
 					nettyBuffer.readBytes(buffer.asByteBuf(), receivedSize);
 
+					//通知对应的channel，backlog是生产者那边堆积的buffer数量
 					inputChannel.onBuffer(buffer, bufferOrEvent.sequenceNumber, bufferOrEvent.backlog);
 				} else if (inputChannel.isReleased()) {
 					cancelRequestFor(bufferOrEvent.receiverId);
@@ -327,9 +357,12 @@ class CreditBasedPartitionRequestClientHandler extends ChannelInboundHandlerAdap
 				nettyBuffer.readBytes(byteArray);
 
 				MemorySegment memSeg = MemorySegmentFactory.wrap(byteArray);
+
+				//是一个事件，不需要从 RemoteInputChannel 中申请 buffer
 				Buffer buffer = new NetworkBuffer(memSeg, FreeingBufferRecycler.INSTANCE, false);
 				buffer.setSize(receivedSize);
 
+				//通知对应的channel，backlog是生产者那边堆积的buffer数量
 				inputChannel.onBuffer(buffer, bufferOrEvent.sequenceNumber, bufferOrEvent.backlog);
 			}
 		} finally {
@@ -343,13 +376,15 @@ class CreditBasedPartitionRequestClientHandler extends ChannelInboundHandlerAdap
 	 * <p>This method may be called by the first input channel enqueuing, or the complete
 	 * future's callback in previous input channel, or the channel writability changed event.
 	 */
+	//给NettyServer发送一条消息(信用值增加了)，具体的发送动作
 	private void writeAndFlushNextMessageIfPossible(Channel channel) {
 		if (channelError.get() != null || !channel.isWritable()) {
 			return;
 		}
 
+		//从队列中取出 RemoteInputChannel， 发送消息
 		while (true) {
-			RemoteInputChannel inputChannel = inputChannelsWithCredit.poll();
+			RemoteInputChannel inputChannel = inputChannelsWithCredit.poll();  //拿出刚才添加的 inputChannel(带新的信用值的)
 
 			// The input channel may be null because of the write callbacks
 			// that are executed after each write.
@@ -359,27 +394,30 @@ class CreditBasedPartitionRequestClientHandler extends ChannelInboundHandlerAdap
 
 			//It is no need to notify credit for the released channel.
 			if (!inputChannel.isReleased()) {
-				AddCredit msg = new AddCredit(
+				AddCredit msg = new AddCredit(  //这里，创建一条  AddCredit  消息
 					inputChannel.getPartitionId(),
-					inputChannel.getAndResetUnannouncedCredit(),
+					inputChannel.getAndResetUnannouncedCredit(),  //获取并重置新增的credit
 					inputChannel.getInputChannelId());
 
 				// Write and flush and wait until this is done before
 				// trying to continue with the next input channel.
-				channel.writeAndFlush(msg).addListener(writeListener);
+				channel.writeAndFlush(msg).addListener(writeListener);  //这里，flush到NettyServer，
 
 				return;
 			}
 		}
 	}
 
+	/**
+	 *  发送完AddCredit消息的监听器，
+	 */
 	private class WriteAndFlushNextMessageIfPossibleListener implements ChannelFutureListener {
 
 		@Override
 		public void operationComplete(ChannelFuture future) throws Exception {
 			try {
 				if (future.isSuccess()) {
-					writeAndFlushNextMessageIfPossible(future.channel());
+					writeAndFlushNextMessageIfPossible(future.channel());  //这个监听器和Server端内个类似，也是类似递归的调用
 				} else if (future.cause() != null) {
 					notifyAllChannelsOfErrorAndClose(future.cause());
 				} else {

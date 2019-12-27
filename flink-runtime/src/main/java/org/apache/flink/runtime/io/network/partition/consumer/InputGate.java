@@ -104,10 +104,10 @@ import java.util.Optional;
  *  > 基于网络 (Netty) 的数据交换  -> RemoteInputChannel (具体实现点进去看)
  *   0.Netty的启动过程在NettyConnectionManager类中有详细的注释，这里不再赘述，注意tm刚启动的时候，NettyConnectionManager就启动了(NettyServer就启动了) 即可
  *   1.requestPartitions()的实现是使用NettyClient去和远程NettyServer建立连接，返回一个tcpChannel，代表一个TCP连接；然后再通过这个连接发送PartitionRequest请求, (结果Future直接忽略了，为啥？)
- *   2.getNextBuffer()的实现就是直接从receivedBuffers中取的，那receivedBuffers中的数据从哪里来的呢？
+ *   2.getNextBuffer()的实现就是直接从receivedBuffers中取的，那receivedBuffers中的数据从哪里来的呢？   看 <<具体实现>> 中的4.1
  * ======================= 问题： =======================
  *
- * ======================= 流量控制 =======================
+ * ======================= 流量控制 =====================
  *
  * Flink 在两个 Task 之间建立 Netty 连接进行数据传输，每一个 Task 会分配两个缓冲池，一个用于输出数据，一个用于接收数据。当一个 Task 的缓冲池用尽之后，网络连接就处于阻塞状态，上游 Task 无法产出数据，
  * 下游 Task 无法接收数据，也就是我们所说的“反压”状态。这是一种非常自然的“反压”的机制，但是过程也相对比较粗暴。由于 TaskManager 之间的网络连接是由不同 Task 复用的，一旦网络处于阻塞状态，
@@ -134,12 +134,30 @@ import java.util.Optional;
  *  3.生产端的处理流程，主要是两个handler:
  *  	3.1 PartitionRequestServerHandler 用来接收PartitionRequest，然后构建一个CreditBasedSequenceNumberingViewReader，简称reader，reader负责连接这个request要请求的ResultSubPartitionView，并且在~View中有数据时收到通知；
  *  	3.2 PartitionRequestQueue 用来监听chnnel的状态，当可写入时，就从上述的reader中取出数据并写入到channel中(发送给客户端)
- *  	3.3 这两个handler之间通过一个队列来连接，即PartitionRequestQueue#availableReaders，reader中有数据时，写入这个队列，作为生产者，PartitionRequestQueue监听到channel可写时，也是从这个队列中消费，作为消费者；
+ *  	3.3 这两个handler之间通过一个队列来连接，即PartitionRequestQueue#availableReaders，reader中有数据时，写入这个队列，作为生产者，PartitionRequestQueue监听到channel可写时，也是从这个队列中消费，作为消费者；然后写出到客户端
  *  	3.4 详细的源码分析在内两个具体的类中
- *  4.消费者的处理流程，
+ *  	3.5 流控的实现可以看 CreditBasedSequenceNumberingViewReader#getNextBuffer()方法，第二个handler消费数据的时候，就是调这个方法从reader中获取数据的，当没有信用值了，即使SubPartitionView中有数据，也消费不到
+ *  4.消费者的处理流程，这里就只有一个handler, 是NetworkClientHandler的实现
+ *		4.1 CreditBasedPartitionRequestClientHandler,作用是负责接收服务端通过 Netty channel 发送的数据，解析数据后交给对应的 RemoteInputChannle 进行处理。主要的流程大概是RemoteInputChannel在利用PartitionRequestClient调用requestSubpartition请求远端subPartition之前，
+ *	    会调用这个Handler的addInputChannel()方法，表示这个input channel已经请求远端分区了，后续可能有它的返回数据；然后在channel可读时会回调channelRead()方法，解码NettyServer返回的消息，解码完之后回调RemoteInputChannel的onBuffer()方法，然后加到receivedBuffers队列(所有上游数据)中
+ *	    <<RemoteInputChannel的getNextBuffer()方法就是从这个队列中取的>>，
+ *	    4.2 还有一个注意点就是在返回的消息中还有一个backlog数据，代表当前生产者堆积的消息的数量，也会传给RemoteInputChannel的onBuffer()方法，RemoteInputChannel会check自己的bufferQueue中的资源是否足够消费上游的堆积数据，如果不够，就会和 BufferPool 进行申请，然后通过partitionRequestClient
+ *	    通知生产端新增了资源(信用)，这样生产者发送数据的时候就可以发送更多的数据(底层还是通过CreditBasedPartitionRequestClientHandler#notifyCreditAvailable()方法给NettyServer发送了一条AddCredit消息)
  *
+ * ======================= 流量控制 =====================
  *
+ * ======================= 反压： =======================
+ * 所谓“反压”，就是指在流处理系统中，下游任务的处理速度跟不上上游任务的数据生产速度。许多日常问题都会导致反压，例如，垃圾回收停顿可能会导致流入的数据快速堆积，或者遇到大促或秒杀活动导致流量陡增。
+ * 反压如果不能得到正确的处理，可能会导致资源耗尽甚至系统崩溃。反压机制就是指系统能够自己检测到被阻塞的算子，然后系统自适应地降低源头或者上游的发送速率。
+ * 在 Flink 中，应对“反压”是一种极其自然的方式，因为 Flink 中的数据传输机制已经提供了应对反压的措施。
  *
+ * 在本地数据交换的情况下，两个 Task 实际上是同一个 JVM 中的两个线程，Task1 产生的 Buffer 直接被 Task2 使用，当 Task2 处理完之后这个 Buffer 就会被回收到本地缓冲池中。
+ * 一旦 Task2 的处理速度比 Task2 产生 Buffer 的速度慢，那么缓冲池中 Buffer 渐渐地就会被耗尽，Task1 无法申请到新的 Buffer 自然就会阻塞，因而会导致 Task1 的降速。
+ *
+ * 在网络数据交换的情况下，如果下游 Task 的处理速度较慢，下游 Task 的接收缓冲池逐渐耗尽后就无法从网络中读取新的数据，这回导致上游 Task 无法将缓冲池中的 Buffer 发送到网络中，因此上游 Task 的缓冲池也会被耗尽，进而导致上游任务的降速。
+ * 为了解决网络连接阻塞导致所有 Task 都无法处理数据的情况，Flink 还引入了 Credit-based Flow Control 算法，在上游生产者下游消费只之间通过“信用点”来协调发送速度，确保网络连接永远不会被阻塞。
+ * 同时，Flink 的网络栈基于 Netty 构建，通过 Netty 的水位线机制也可以控制发送端的发送速率。
+ * ======================= 反压： =======================
  */
 public interface InputGate {
 

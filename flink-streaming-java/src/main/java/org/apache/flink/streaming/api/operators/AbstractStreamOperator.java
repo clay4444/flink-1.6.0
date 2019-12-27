@@ -108,6 +108,9 @@ public abstract class AbstractStreamOperator<OUT>
 
 	protected transient StreamConfig config;
 
+	/**
+	 * 用来处理当前算子处理完的记录
+	 */
 	protected transient Output<StreamRecord<OUT>> output;
 
 	/** The runtime context for UDFs. */
