@@ -28,6 +28,7 @@ import java.util.concurrent.TimeUnit;
  * 		是 RpcEndpoint 的运行时环境， RpcService 提供了启动 RpcEndpoint, 连接到远端 RpcEndpoint 并返回远端 RpcEndpoint 的代理对象等方法。此外， RpcService 还提供了某些异步任务或者周期性调度任务的方法。
  * RpcServer:
  * 		相当于 RpcEndpoint 自身的的代理对象（self gateway)。RpcServer 是 RpcService 在启动了 RpcEndpoint 之后返回的对象，每一个 RpcEndpoint 对象内部都有一个 RpcServer 的成员变量，通过 getSelfGateway 方法就可以获得自身的代理，然后调用该Endpoint 提供的服务。
+ * 	    本质上RpcServer就是一个用 Proxy.newProxyInstance 方法创建的，并且实现了指定RpcEndpoint(某个具体子类)接口的代理对象，它是上面内个RpcService创建并返回的； 具体可以看 AkkaRpcService的startServer()方法；
  *
  *
  * 创建具体的RpcEndpoint，创建的过程中 调用RpcService.startServer方法(会先创建一个Actor[里面具体的RpcEndpoint])， 实例化这个RpcEndpoint对应的RpcServer，RpcServer是一个代理对象，以后方法的调用都通过RpcServer来调用(比如start方法、自定义协议的方法等)，具体则是对应的invocationHandler方法，
@@ -67,7 +68,7 @@ public class RpcTest {
 
 	public static class HiRpcEndpoint extends RpcEndpoint implements HiGateway {
 		protected HiRpcEndpoint(RpcService rpcService) {
-			super(rpcService);  //会调用 AkkaRpcService#startServer 方法来初始化服务，
+			super(rpcService);  //会调用 AkkaRpcService#startServer 方法来初始化服务，所谓的初始化服务就是返回了一个代理对象rpcServer；
 		}
 
 		@Override
@@ -99,6 +100,14 @@ public class RpcTest {
 			.get(TIMEOUT.toMilliseconds(), TimeUnit.MILLISECONDS);
 	}
 
+	/**
+	 * 总结一下流程就是分为以下几步
+	 * 1. 创建具体的RpcEndpoint，创建的时候传入了rpcService，它是 RpcEndpoint 的运行时环境，创建的时候，在构造器中就调用了super(rpcService)方法[必须存在]，在这个父类方法中，rpcService.startServer(this) 这段代码就创建了一个代理对象，
+	 * 	  这个代理对象就被称为RpcServer，它就是用Proxy.newProxyInstance 方法创建的，并且实现了指定RpcEndpoint(某个具体子类)接口的代理对象，
+	 * 2. 调用具体的RpcEndpoint的start()方法，实际上就会调用代理对象RpcServer的start方法，最终调用 InvocationHandler 的start方法
+	 *
+	 * 3. 注意：真正的分布式环境下，服务端创建并返回的RpcServer肯定是不能直接被客户端用的，也就是没用的，这个RpcServer只能本地测试使用，真正起作用的是创建的具体的 Actor，比如AkkaRpcActor(一个endPoint对应一个Actor)，它用来接收并处理用户请求；
+	 */
 	@Test
 	public void test() throws Exception {
 
@@ -112,8 +121,8 @@ public class RpcTest {
 		// 		这种是在服务端本地同一个jvm中的方法的调用方式，需要注意的就是此时构造的RpcServer代理对象和invocationHandler，只供本地同一个jvm中进行方法调用；
 		//------------------------------------------------------------------------------------------------------------------------------------
 		//获取 endpoint 的 self gateway
-		HelloGateway helloGateway = helloEndpoint.getSelfGateway(HelloGateway.class); // getSelfGateway 返回一个代理对象；
-		String hello = helloGateway.hello(); //调用代理对象的方法，
+		HelloGateway helloGateway = helloEndpoint.getSelfGateway(HelloGateway.class); // getSelfGateway 返回一个代理对象； 这个代理对象就是 rpcServer 强转来的 ！
+		String hello = helloGateway.hello(); //直接调用代理对象的方法，只适用于本地测试的情况；
 		//assertEquals("hello", hello);
 
 		System.out.println(hello);

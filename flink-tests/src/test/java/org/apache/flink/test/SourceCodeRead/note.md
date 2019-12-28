@@ -7,6 +7,9 @@
 5. dispatcher#submitJob:  创建 JobManagerRunner(用来启jobMaster), 然后start启动，       -> leader竞选
 6. JobManagerRunner 拿到授权，回调时，启动jobMaster，然后和 rm 建立连接 (需要向rm申请资源)
 7. executionGraph.scheduleForExecution()  真正执行；
+8. 注意：jobMaster(jobManagerRunner) 是在dispatcher接收到用户作业的时候创建的，而不是在集群启动的时候创建的；
+
+**具体的源码解析需要查看 MiniCluster 的 start() 方法**
 
 
 ### 所有涉及到选举服务的组件
@@ -88,10 +91,18 @@ Flink 可以处理任意的 Java 或 Scala 对象，而不必实现特定的接�
 
 ### Task的生命周期
 
-问题1：上游算子处理之后的记录如何传递给下游算子？  OperatorChain 内部的话，主要是通过 OutPut 这个接口
+问题1：上游算子处理之后的记录如何传递给下游算子？  主要是通过 OutPut 这个接口，这个接口的作用就是为了实现往下游发送数据；
 
-> 一个 Task 运行期间的主要处理逻辑对应一个 OperatorChain，这个 OperatorChain 可能包含多个 Operator，也可能只有一个 Operator。
-> operator算子处理完的数据收集主要靠 OutPut 接口，每一个 StreamOperator 都有一个 Output 成员，用于收集当前算子处理完的记录，比如在StreamMap / StreamFilter / StreamFlatMap 等
+-  一个 Task 运行期间的主要处理逻辑对应一个 OperatorChain，这个 OperatorChain 可能包含多个 Operator，也可能只有一个 Operator。
+-  operator算子处理完的数据收集主要靠 OutPut 接口，每一个 StreamOperator 都有一个 Output 成员，用于收集当前算子处理完的记录，比如在StreamMap / StreamFilter / StreamFlatMap 等
+-  在OperatorChain内部，定义了很多的内部类，并且实现了OutPut接口，用来给下游算子传输数据，这里要分几种情况来具体探讨；
+    1. ChainingOutput类，用来处理一个OperatorChain中间的算子，通过在ChainingOutput类中保存一个下游算子的引用，来实现直接把数据传输给下游算子，
+    2. BroadcastingOutputCollector类，原理和第一个一样，但ExecutionConfig中默认会禁止对象重用，所以会把一条数据复制一遍，再传给下游算子
+    3. BroadcastingOutputCollector类，主要用在当前算子有多个下游算子的情况下，接收到一条数据，会发给下游所有的算子
+    4. DirectedOutput类，主要是在 split/select 的情况下使用
+    5. RecordWriterOutput类，主要用来处理位于 OperatorChain 末尾的算子，这种算子需要把数据写入对应的ResultPartition，核心在recordWriter.emit()，这里会和ResultPartition(数据输出)的源码联系在一起，具体可以到对应的源码文件看解析
+    
+
 
 
 

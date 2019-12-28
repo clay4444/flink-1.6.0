@@ -41,11 +41,14 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /**
  * Implementation of {@link Output} that sends data using a {@link RecordWriter}.
+ *
+ * 对于位于 OperatorChain 末尾的算子，它处理过的记录需要被其它 Task 消费，因此它的记录需要被写入 ResultPartition 。因此，Flink 提供了 RecordWriterOutput，它也实现了 WatermarkGaugeExposingOutput，
+ * 但是它是通过 RecordWriter 输出接收到的消息记录。RecordWriter 是 ResultPartitionWriter 的一层包装，提供了将记录序列化到 buffer 中的功能。
  */
 @Internal
 public class RecordWriterOutput<OUT> implements OperatorChain.WatermarkGaugeExposingOutput<StreamRecord<OUT>> {
 
-	private StreamRecordWriter<SerializationDelegate<StreamElement>> recordWriter;
+	private StreamRecordWriter<SerializationDelegate<StreamElement>> recordWriter;   //就是通过它来往下游发送数据的，详细的数据写出流程可以看 RecordWriter 类的代码解析
 
 	private SerializationDelegate<StreamElement> serializationDelegate;
 
@@ -79,6 +82,7 @@ public class RecordWriterOutput<OUT> implements OperatorChain.WatermarkGaugeExpo
 		this.streamStatusProvider = checkNotNull(streamStatusProvider);
 	}
 
+	//这里， collect 方法
 	@Override
 	public void collect(StreamRecord<OUT> record) {
 		if (this.outputTag != null) {
@@ -100,11 +104,13 @@ public class RecordWriterOutput<OUT> implements OperatorChain.WatermarkGaugeExpo
 		pushToRecordWriter(record);
 	}
 
+	//核心方法
 	private <X> void pushToRecordWriter(StreamRecord<X> record) {
 		serializationDelegate.setInstance(record);
 
 		try {
-			recordWriter.emit(serializationDelegate);
+			//这里已经对应上了数据输出的代码解析，可以跳到 RecordWriter类的emit() 方法，继续查看后续流程
+			recordWriter.emit(serializationDelegate); // <<<<<< 核心，直接看这里， 调用emit()方法来往ResultPartition中写出数据，
 		}
 		catch (Exception e) {
 			throw new RuntimeException(e.getMessage(), e);

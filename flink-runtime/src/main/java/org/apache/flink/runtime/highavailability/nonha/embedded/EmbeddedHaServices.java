@@ -52,6 +52,7 @@ public class EmbeddedHaServices extends AbstractNonHaServices {
 
 	private final EmbeddedLeaderService webMonitorLeaderService;
 
+	//这里，在构造器中就创建了3个需要HA的组件的 LeadService(包括leader检索和leader选举)
 	public EmbeddedHaServices(Executor executor) {
 		this.executor = Preconditions.checkNotNull(executor);
 		this.resourceManagerLeaderService = new EmbeddedLeaderService(executor);

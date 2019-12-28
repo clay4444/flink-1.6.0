@@ -98,7 +98,7 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 
 	private final WatermarkGaugeExposingOutput<StreamRecord<OUT>> chainEntryPoint;
 
-	//只需要将数据交给headOperator 就可以了，对外界来说，只和这个operator接触(其他的operator会在ChainingOutput 这个内部类中直接处理)，这就是内个入度为1的operator，
+	//只需要将数据交给 headOperator 就可以了，对外界来说，只和这个operator接触(其他的operator会在 ChainingOutput 这个内部类中直接处理)，这就是内个入度为1的operator，
 	private final OP headOperator;
 
 	/**
@@ -432,6 +432,10 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 
 	// ------------------------------------------------------------------------
 	//  Collectors for output chaining
+	//  下面这些静态内部类主要就是继承Output接口来实现 往下游发送数据的； (OutPut的具体实现)
+	//  还有两个实现没有在下面的内部类中：
+	//  	1.DirectedOutput    主要用在 split/select 的情况下
+	//		2.RecordWriterOutput	主要用于 OperatorChain 末尾的算子，它的记录需要被写入 ResultPartition
 	// ------------------------------------------------------------------------
 
 	/**
@@ -439,7 +443,7 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 	 *
 	 * @param <T> The type of the elements that can be emitted.
 	 *
-	 *           它主要是额外提供了一个获取 watermark 值的方法：
+	 *  它主要是额外提供了一个获取 watermark 值的方法：
 	 */
 	public interface WatermarkGaugeExposingOutput<T> extends Output<T> {
 		Gauge<Long> getWatermarkGauge();
@@ -448,6 +452,9 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 	/**
 	 * 两个subtask chain成一个task的具体实现，
 	 * 实现了上面的接口，上面的接口又继承了Output，Output的作用是收集当前算子的计算结果，往下游发送，
+	 *
+	 * 通过在 ChainingOutput 中保存下游 StreamOperator 的引用，ChainingOutput 直接将对象的引用传递给下游算子。但是 ExecutionConfig 有一个配置项，即 objectReuse，在默认情况下会禁止对象重用。
+	 * 如果不允许对象重用，则不会使用 ChainingOutput，而是会使用 CopyingChainingOutput。顾名思义，它和 ChainingOutput 的区别在于，它会对记录进行拷贝后传递给下游算子。
 	 * @param <T>
 	 */
 	static class ChainingOutput<T> implements WatermarkGaugeExposingOutput<StreamRecord<T>> {
@@ -565,6 +572,13 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 		}
 	}
 
+	/**
+	 * 默认会使用这个类往下游发送数据  <<<<<<
+	 *
+	 * 通过在 ChainingOutput 中保存下游 StreamOperator 的引用，ChainingOutput 直接将对象的引用传递给下游算子。但是 ExecutionConfig 有一个配置项，即 objectReuse，在默认情况下会禁止对象重用。
+	 * 如果不允许对象重用，则不会使用 ChainingOutput，而是会使用 CopyingChainingOutput。顾名思义，它和 ChainingOutput 的区别在于，它会对记录进行拷贝后传递给下游算子。
+	 * @param <T>
+	 */
 	static final class CopyingChainingOutput<T> extends ChainingOutput<T> {
 
 		private final TypeSerializer<T> serializer;
@@ -578,6 +592,7 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 			this.serializer = serializer;
 		}
 
+		//往下游发送数据的方法
 		@Override
 		public void collect(StreamRecord<T> record) {
 			if (this.outputTag != null) {
@@ -585,7 +600,7 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 				return;
 			}
 
-			pushToOperator(record);
+			pushToOperator(record);  // 这里
 		}
 
 		@Override
@@ -599,6 +614,7 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 			pushToOperator(record);
 		}
 
+		//这里
 		@Override
 		protected <X> void pushToOperator(StreamRecord<X> record) {
 			try {
@@ -608,9 +624,9 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 				StreamRecord<T> castRecord = (StreamRecord<T>) record;
 
 				numRecordsIn.inc();
-				StreamRecord<T> copy = castRecord.copy(serializer.copy(castRecord.getValue()));
+				StreamRecord<T> copy = castRecord.copy(serializer.copy(castRecord.getValue()));  //这里是不一致的地方，禁止了对象重用，所以拷贝了一份新的数据，
 				operator.setKeyContextElement1(copy);
-				operator.processElement(copy);
+				operator.processElement(copy);     //下游算子处理的是拷贝的数据，这是 和 ChainingOutput 唯一的不同点
 			} catch (ClassCastException e) {
 				if (outputTag != null) {
 					// Enrich error message
@@ -633,9 +649,14 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 		}
 	}
 
+	/**
+	 * BroadcastingOutputCollector 封装了一组 Output, 即 Output<StreamRecord<T>>[] outputs, 在接收到 StreamRecord 时，会将消息提交到所有的 内部所有的 Output 中。
+	 * BroadcastingOutputCollector 主要用在当前算子有多个下游算子的情况下。
+	 * @param <T>
+	 */
 	static class BroadcastingOutputCollector<T> implements WatermarkGaugeExposingOutput<StreamRecord<T>> {
 
-		protected final Output<StreamRecord<T>>[] outputs;
+		protected final Output<StreamRecord<T>>[] outputs;  //用来发送给下游所有的算子
 
 		private final Random random = new XORShiftRandom();
 
@@ -677,10 +698,11 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 			return watermarkGauge;
 		}
 
+		//这里，collect方法
 		@Override
 		public void collect(StreamRecord<T> record) {
 			for (Output<StreamRecord<T>> output : outputs) {
-				output.collect(record);
+				output.collect(record);  //遍历所有的 OutPut，发送给下游所有的算子
 			}
 		}
 
@@ -700,6 +722,8 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 	}
 
 	/**
+	 * 对应上一个 BroadcastingOutputCollector
+	 *
 	 * Special version of {@link BroadcastingOutputCollector} that performs a shallow copy of the
 	 * {@link StreamRecord} to ensure that multi-chaining works correctly.
 	 */

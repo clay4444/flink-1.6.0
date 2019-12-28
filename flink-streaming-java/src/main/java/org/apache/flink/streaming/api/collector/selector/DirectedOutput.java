@@ -41,10 +41,14 @@ import java.util.Set;
 /**
  * Wrapping {@link Output} that forwards to other {@link Output Outputs } based on a list of
  * {@link OutputSelector OutputSelectors}.
+ *
+ * 主要用在 split/select 的情况下
+ *
+ * DirectedOutput 基于 OutputSelector<OUT>[] outputSelectors 选择要转发的目标 Output，主要是在 split/select 的情况下使用。与 DirectedOutput 对应的也有一个 CopyingDirectedOutput。
  */
 public class DirectedOutput<OUT> implements OperatorChain.WatermarkGaugeExposingOutput<StreamRecord<OUT>> {
 
-	protected final OutputSelector<OUT>[] outputSelectors;
+	protected final OutputSelector<OUT>[] outputSelectors;   //主要通过这个selector来确定到底要写入哪个OutPut
 
 	protected final Output<StreamRecord<OUT>>[] selectAllOutputs;
 
@@ -117,6 +121,9 @@ public class DirectedOutput<OUT> implements OperatorChain.WatermarkGaugeExposing
 		allOutputs[random.nextInt(allOutputs.length)].emitLatencyMarker(latencyMarker);
 	}
 
+	/**
+	 * @param record    确定这条record数据，要往哪些 OutPut 中写入
+	 */
 	protected Set<Output<StreamRecord<OUT>>> selectOutputs(StreamRecord<OUT> record)  {
 		Set<Output<StreamRecord<OUT>>> selectedOutputs = new HashSet<>(selectAllOutputs.length);
 		Collections.addAll(selectedOutputs, selectAllOutputs);
@@ -135,11 +142,12 @@ public class DirectedOutput<OUT> implements OperatorChain.WatermarkGaugeExposing
 		return selectedOutputs;
 	}
 
+	//这里，collect方法
 	@Override
 	public void collect(StreamRecord<OUT> record) {
 		Set<Output<StreamRecord<OUT>>> selectedOutputs = selectOutputs(record);
 
-		for (Output<StreamRecord<OUT>> out : selectedOutputs) {
+		for (Output<StreamRecord<OUT>> out : selectedOutputs) {  //要往这些 OutPut 中写入
 			out.collect(record);
 		}
 	}

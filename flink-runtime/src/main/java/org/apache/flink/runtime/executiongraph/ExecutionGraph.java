@@ -877,22 +877,27 @@ public class ExecutionGraph implements AccessExecutionGraph {
 		failoverStrategy.notifyNewVertices(newExecJobVertices);
 	}
 
-	//调度执行，最终调用到：Execution 类的 deploy 方法；
+	/**
+	 *  >>>>>>>>>> DAG作业开始真正调度执行作业的入口
+	 * ExecutionGraph已经生成了，开始调度执行作业，
+	 * 最终调用到：Execution 类的 deploy 方法；
+	 * @throws JobException
+	 */
 	public void scheduleForExecution() throws JobException {
 
 		final long currentGlobalModVersion = globalModVersion;
 
-		if (transitionState(JobStatus.CREATED, JobStatus.RUNNING)) {
+		if (transitionState(JobStatus.CREATED, JobStatus.RUNNING)) {  //先设置Job的状态从 CREATED -> RUNNING
 
 			final CompletableFuture<Void> newSchedulingFuture;
 
 			switch (scheduleMode) {
-
-				case LAZY_FROM_SOURCES:
+				//调度任务
+				case LAZY_FROM_SOURCES:  //只运行 source，其它的子任务由source进行通知
 					newSchedulingFuture = scheduleLazy(slotProvider);
 					break;
 
-				case EAGER:
+				case EAGER:  //所有的子任务都立即进行调度，这是 streaming 模式采用的方式
 					newSchedulingFuture = scheduleEager(slotProvider, allocationTimeout);
 					break;
 
@@ -940,7 +945,7 @@ public class ExecutionGraph implements AccessExecutionGraph {
 	}
 
 	/**
-	 *
+	 * 所有的子任务都立即进行调度，这是 streaming 模式采用的方式
 	 *
 	 * @param slotProvider  The resource provider from which the slots are allocated
 	 * @param timeout       The maximum time that the deployment may take, before a
@@ -961,8 +966,10 @@ public class ExecutionGraph implements AccessExecutionGraph {
 		final ArrayList<CompletableFuture<Execution>> allAllocationFutures = new ArrayList<>(getNumberOfExecutionJobVertices());
 
 		// allocate the slots (obtain all their futures
-		for (ExecutionJobVertex ejv : getVerticesTopologically()) {
+		for (ExecutionJobVertex ejv : getVerticesTopologically()) {   //遍历所有的ExecutionJobVertex，一个ExecutionJobVertex 就是根据 jobVertex 生成的；
 			// these calls are not blocking, they only return futures
+
+			//通过ExecutionJobVertex申请资源？为所有的ExecutionVertex(Task)申请资源？
 			Collection<CompletableFuture<Execution>> allocationFutures = ejv.allocateResourcesForAll(
 				slotProvider,
 				queued,
@@ -974,6 +981,7 @@ public class ExecutionGraph implements AccessExecutionGraph {
 
 		// this future is complete once all slot futures are complete.
 		// the future fails once one slot future fails.
+		// 等待所有需要调度的子任务都分配到资源
 		final ConjunctFuture<Collection<Execution>> allAllocationsFuture = FutureUtils.combineAll(allAllocationFutures);
 
 		final CompletableFuture<Void> currentSchedulingFuture = allAllocationsFuture

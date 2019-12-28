@@ -217,6 +217,8 @@ public class MiniCluster implements JobExecutorService, AutoCloseableAsync {
 	 * @throws Exception This method passes on any exception that occurs during the startup of
 	 *                   the mini cluster.
 	 *
+	 *  >>>> 注意：JobManager(jobMaster)不是在启动集群的时候初始化的，而是在job提交到dispatcher之后，由dispatcher创建的 ！！！！！！！！
+	 *
 	 * 大致分为三个阶段
 	 * 	1.创建一些辅助的服务，如 RpcService， HighAvailabilityServices, BlobServer 等
 	 * 	2.启动 TaskManager
@@ -354,7 +356,7 @@ public class MiniCluster implements JobExecutorService, AutoCloseableAsync {
 				// starting the dispatcher rest endpoint
 				LOG.info("Starting dispatcher rest endpoint.");
 
-
+				//这个的作用是啥？因为用户的job是向dispatcher提交的(通过rpc调用DispatcherGateway的方法提交作业)，
 				dispatcherGatewayRetriever = new RpcGatewayRetriever<>(   //通过它的createGateway方法可以获取到 DispatcherGateway 的远程代理对象
 					jobManagerRpcService,
 					DispatcherGateway.class, //要获取 DispatcherGateway的远程代理对象
@@ -362,6 +364,7 @@ public class MiniCluster implements JobExecutorService, AutoCloseableAsync {
 					20,
 					Time.milliseconds(20L));
 
+				//这个的作用是啥？用户的作业提交到dispatcher之后，会创建jobMaster(通过jobManagerRunner)，jobMaster会最终执行作业，需要申请资源，此时就需要和rm通信
 				//通过它的createGateway方法可以获取到 ResourceManagerGateway 的远程代理对象
 				final RpcGatewayRetriever<ResourceManagerId, ResourceManagerGateway> resourceManagerGatewayRetriever = new RpcGatewayRetriever<>(
 					jobManagerRpcService,
@@ -685,7 +688,7 @@ public class MiniCluster implements JobExecutorService, AutoCloseableAsync {
 		final DispatcherGateway dispatcherGateway;
 		try {
 			//通过 Dispatcher 的 gateway retriever 获取 DispatcherGateway
-			dispatcherGateway = getDispatcherGateway();  //远程代理对象； dispatcher
+			dispatcherGateway = getDispatcherGateway();  //远程代理对象； dispatcher  >>>> 在start()方法中初始化的；
 		} catch (LeaderRetrievalException | InterruptedException e) {
 			ExceptionUtils.checkInterrupted(e);
 			return FutureUtils.completedExceptionally(e);

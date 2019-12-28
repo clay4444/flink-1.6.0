@@ -102,6 +102,12 @@ import static org.apache.flink.util.Preconditions.checkState;
  * may even result in distributed deadlocks (unless carefully avoided). We therefore use atomic state updates and
  * occasional double-checking to ensure that the state after a completed call is as expected, and trigger correcting
  * actions if it is not. Many actions are also idempotent (like canceling).
+ *
+ * ExecutionVertex的一次执行，因为一个ExecutionVertex可以执行多次， 每次执行对应一个Task
+ * 这个类用来追踪这次执行的状态 和 资源使用情况；
+ *
+ * 这个类是啥时候创建的呢？ 创建ExecutionGraph的时候就创建了，
+ * 具体来说是根据jobVertex创建 ExecutionJobVertex 的时候根据 jobVertex并行度 创建对应个数的 ExecutionVertex，然后创建具体的ExecutionVertex的时候，就创建了第一个Execution
  */
 public class Execution implements AccessExecution, Archiveable<ArchivedExecution>, LogicalSlot.Payload {
 

@@ -526,6 +526,9 @@ public class ExecutionJobVertex implements AccessExecutionJobVertex, Archiveable
 	}
 
 	/**
+	 * 为当前 ExecutionJobVertex 的所有 ExecutionVertex 申请资源，一个ExecutionVertex就对应一个具体要执行的Task，也就需要申请一个Slot，
+	 *
+	 *
 	 * Acquires a slot for all the execution vertices of this ExecutionJobVertex. The method returns
 	 * pairs of the slots and execution attempts, to ease correlation between vertices and execution
 	 * attempts.
@@ -542,15 +545,15 @@ public class ExecutionJobVertex implements AccessExecutionJobVertex, Archiveable
 			boolean queued,
 			LocationPreferenceConstraint locationPreferenceConstraint,
 			Time allocationTimeout) {
-		final ExecutionVertex[] vertices = this.taskVertices;
+		final ExecutionVertex[] vertices = this.taskVertices;  //所有 ExecutionVertex (一个并行度一个)
 		final CompletableFuture<Execution>[] slots = new CompletableFuture[vertices.length];
 
 		// try to acquire a slot future for each execution.
 		// we store the execution with the future just to be on the safe side
-		for (int i = 0; i < vertices.length; i++) {
+		for (int i = 0; i < vertices.length; i++) {  //所有的 ExecutionVertex ；
 			// allocate the next slot (future)
-			final Execution exec = vertices[i].getCurrentExecutionAttempt();
-			final CompletableFuture<Execution> allocationFuture = exec.allocateAndAssignSlotForExecution(
+			final Execution exec = vertices[i].getCurrentExecutionAttempt(); //当前ExecutionVertex对应的Execution(创建ExecutionVertex的时候，就创建了Execution)；
+			final CompletableFuture<Execution> allocationFuture = exec.allocateAndAssignSlotForExecution(  //靠，最终还是调用具体的Execution去申请slot
 				resourceProvider,
 				queued,
 				locationPreferenceConstraint,
