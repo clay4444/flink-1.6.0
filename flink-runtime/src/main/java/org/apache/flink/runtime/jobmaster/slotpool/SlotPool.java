@@ -89,6 +89,8 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  *
  * <p>TODO : Make pending requests location preference aware
  * TODO : Make pass location preferences to ResourceManager when sending a slot request
+ *
+ * JobManager 使用 SlotPool 来向 ResourceManager 申请 slot， 并管理所有分配给该 JobManager 的 slots。这里所说的 slot 指的都是 physical slot。
  */
 public class SlotPool extends RpcEndpoint implements SlotPoolGateway, AllocatedSlotActions {
 
@@ -105,16 +107,16 @@ public class SlotPool extends RpcEndpoint implements SlotPoolGateway, AllocatedS
 	private final HashSet<ResourceID> registeredTaskManagers;
 
 	/** The book-keeping of all allocated slots. */
-	private final AllocatedSlots allocatedSlots;
+	private final AllocatedSlots allocatedSlots;     //所有分配给当前 JobManager 的 slots
 
 	/** The book-keeping of all available slots. */
-	private final AvailableSlots availableSlots;
+	private final AvailableSlots availableSlots;		//所有可用的 slots（已经分配给该 JobManager，但还没有装载 payload）
 
 	/** All pending requests waiting for slots. */
-	private final DualKeyMap<SlotRequestId, AllocationID, PendingRequest> pendingRequests;
+	private final DualKeyMap<SlotRequestId, AllocationID, PendingRequest> pendingRequests;		//所有处于等待状态的slot request（已经发送请求给 ResourceManager）
 
 	/** The requests that are waiting for the resource manager to be connected. */
-	private final HashMap<SlotRequestId, PendingRequest> waitingForResourceManager;
+	private final HashMap<SlotRequestId, PendingRequest> waitingForResourceManager;				//处于等待状态的 slot request （还没有发送请求给 ResourceManager，此时没有和 ResourceManager 建立连接）
 
 	/** Timeout for external request calls (e.g. to the ResourceManager or the TaskExecutor). */
 	private final Time rpcTimeout;
@@ -610,6 +612,8 @@ public class SlotPool extends RpcEndpoint implements SlotPoolGateway, AllocatedS
 	 * @param allowQueuedScheduling true if the slot allocation can be completed in the future
 	 * @param allocationTimeout timeout before the slot allocation times out
 	 * @return Future containing the allocated simple slot
+	 *
+	 * 请求分配slot
 	 */
 	private CompletableFuture<SlotAndLocality> requestAllocatedSlot(
 			SlotRequestId slotRequestId,
@@ -620,12 +624,12 @@ public class SlotPool extends RpcEndpoint implements SlotPoolGateway, AllocatedS
 		final CompletableFuture<SlotAndLocality> allocatedSlotLocalityFuture;
 
 		// (1) do we have a slot available already?
-		SlotAndLocality slotFromPool = pollAndAllocateSlot(slotRequestId, slotProfile);
+		SlotAndLocality slotFromPool = pollAndAllocateSlot(slotRequestId, slotProfile);  //先尝试从当前可用的 slot 中获取
 
 		if (slotFromPool != null) {
 			allocatedSlotLocalityFuture = CompletableFuture.completedFuture(slotFromPool);
 		} else if (allowQueuedScheduling) {
-			// we have to request a new allocated slot
+			// we have to request a new allocated slot      没有可用的，就向rm请求新的slot
 			CompletableFuture<AllocatedSlot> allocatedSlotFuture = requestNewAllocatedSlot(
 				slotRequestId,
 				slotProfile.getResourceProfile(),
@@ -649,12 +653,15 @@ public class SlotPool extends RpcEndpoint implements SlotPoolGateway, AllocatedS
 	 * @param resourceProfile which the requested slot should fulfill
 	 * @param allocationTimeout timeout before the slot allocation times out
 	 * @return An {@link AllocatedSlot} future which is completed once the slot is offered to the {@link SlotPool}
+	 *
+	 * 向RM申请新的 slot，
 	 */
 	private CompletableFuture<AllocatedSlot> requestNewAllocatedSlot(
 			SlotRequestId slotRequestId,
 			ResourceProfile resourceProfile,
 			Time allocationTimeout) {
 
+		//构造一个 PendingRequest
 		final PendingRequest pendingRequest = new PendingRequest(
 			slotRequestId,
 			resourceProfile);
@@ -665,20 +672,24 @@ public class SlotPool extends RpcEndpoint implements SlotPoolGateway, AllocatedS
 			.whenCompleteAsync(
 				(AllocatedSlot ignored, Throwable throwable) -> {
 					if (throwable instanceof TimeoutException) {
+						//超时处理
 						timeoutPendingSlotRequest(slotRequestId);
 					}
 				},
 				getMainThreadExecutor());
 
 		if (resourceManagerGateway == null) {
+			//如果当前没有和 RM 建立连接，则需要等待 RM 建立连接
 			stashRequestWaitingForResourceManager(pendingRequest);
 		} else {
+			//当前已经和 RM 建立了连接，向 RM 申请slot
 			requestSlotFromResourceManager(resourceManagerGateway, pendingRequest);
 		}
 
 		return pendingRequest.getAllocatedSlotFuture();
 	}
 
+	//当前已经和 RM 建立了连接，向 RM 申请slot
 	private void requestSlotFromResourceManager(
 			final ResourceManagerGateway resourceManagerGateway,
 			final PendingRequest pendingRequest) {
@@ -688,8 +699,10 @@ public class SlotPool extends RpcEndpoint implements SlotPoolGateway, AllocatedS
 
 		log.info("Requesting new slot [{}] and profile {} from resource manager.", pendingRequest.getSlotRequestId(), pendingRequest.getResourceProfile());
 
+		//生成一个 AllocationID，后面分配的 slot 通过 AllocationID 区分
 		final AllocationID allocationId = new AllocationID();
 
+		//添加到等待处理的请求中
 		pendingRequests.put(pendingRequest.getSlotRequestId(), allocationId, pendingRequest);
 
 		pendingRequest.getAllocatedSlotFuture().whenComplete(
@@ -701,6 +714,7 @@ public class SlotPool extends RpcEndpoint implements SlotPoolGateway, AllocatedS
 				}
 			});
 
+		//通过 RPC 调用向 RM 请求 slot，RM 的处理流程在前面已经介绍过
 		CompletableFuture<Acknowledge> rmResponse = resourceManagerGateway.requestSlot(
 			jobMasterId,
 			new SlotRequest(jobId, allocationId, pendingRequest.getResourceProfile(), jobManagerAddress),
@@ -728,6 +742,8 @@ public class SlotPool extends RpcEndpoint implements SlotPoolGateway, AllocatedS
 		}
 	}
 
+	//如果当前没有和 RM 建立连接，则需要等待 RM 建立连接，加入 waitingForResourceManager
+	//一旦和 RM 建立连接，就会向 RM 发送请求
 	private void stashRequestWaitingForResourceManager(final PendingRequest pendingRequest) {
 
 		log.info("Cannot serve slot request, no ResourceManager connected. " +
@@ -810,11 +826,13 @@ public class SlotPool extends RpcEndpoint implements SlotPoolGateway, AllocatedS
 		}
 	}
 
+	//取出并分配slot
 	@Nullable
 	private SlotAndLocality pollAndAllocateSlot(SlotRequestId slotRequestId, SlotProfile slotProfile) {
-		SlotAndLocality slotFromPool = availableSlots.poll(schedulingStrategy, slotProfile);
+		SlotAndLocality slotFromPool = availableSlots.poll(schedulingStrategy, slotProfile);   //从 availableSlots 中移除
 
 		if (slotFromPool != null) {
+			//加入已分配的映射关系中
 			allocatedSlots.add(slotRequestId, slotFromPool.getSlot());
 		}
 
@@ -826,19 +844,25 @@ public class SlotPool extends RpcEndpoint implements SlotPoolGateway, AllocatedS
 	 * allocated slot to the set of available slots if no matching request is available.
 	 *
 	 * @param allocatedSlot which shall be returned
+	 *
+	 * 一旦有新的可用的 AllocatedSlot 的时候，SlotPool 会尝试用这个 AllocatedSlot 去提前满足其他还在等待响应的请求：
+	 *
 	 */
 	private void tryFulfillSlotRequestOrMakeAvailable(AllocatedSlot allocatedSlot) {
 		Preconditions.checkState(!allocatedSlot.isUsed(), "Provided slot is still in use.");
 
+		//查找和当前 AllocatedSlot 的计算资源相匹配的还在等待的请求
 		final PendingRequest pendingRequest = pollMatchingPendingRequest(allocatedSlot);
 
 		if (pendingRequest != null) {
+			//如果有匹配的请求，那么将 AllocatedSlot 分配给等待的请求
 			log.debug("Fulfilling pending slot request [{}] early with returned slot [{}]",
 				pendingRequest.getSlotRequestId(), allocatedSlot.getAllocationId());
 
 			allocatedSlots.add(pendingRequest.getSlotRequestId(), allocatedSlot);
 			pendingRequest.getAllocatedSlotFuture().complete(allocatedSlot);
 		} else {
+			//如果没有，那么这个 AllocatedSlot 变成 available 的
 			log.debug("Adding returned slot [{}] to available slots", allocatedSlot.getAllocationId());
 			availableSlots.add(allocatedSlot, clock.relativeTimeMillis());
 		}
@@ -867,6 +891,12 @@ public class SlotPool extends RpcEndpoint implements SlotPoolGateway, AllocatedS
 		return null;
 	}
 
+	/**
+	 * rpc方法，被tm回调
+	 * jm向rm申请资源，rm有所有slot的信息，会将请求转发给tm，然后tm会将某个具体的slot通过rpc调用jm的这个方法，来为当前的jm分配slot
+	 *
+	 * 具体是向 SlotPool 分配 slot，返回已经被接受的 slot 集合。没有被接受的 slot，RM 可以分配给其他 Job。
+	 */
 	@Override
 	public CompletableFuture<Collection<SlotOffer>> offerSlots(
 			TaskManagerLocation taskManagerLocation,
@@ -874,9 +904,10 @@ public class SlotPool extends RpcEndpoint implements SlotPoolGateway, AllocatedS
 			Collection<SlotOffer> offers) {
 		validateRunsInMainThread();
 
+		//SlotPool 可以确定是否接受每一个 slot
 		List<CompletableFuture<Optional<SlotOffer>>> acceptedSlotOffers = offers.stream().map(
 			offer -> {
-				CompletableFuture<Optional<SlotOffer>> acceptedSlotOffer = offerSlot(
+				CompletableFuture<Optional<SlotOffer>> acceptedSlotOffer = offerSlot(  //这个方法用来确定当前jm是否接受当前slot
 						taskManagerLocation,
 						taskManagerGateway,
 						offer)
@@ -905,6 +936,8 @@ public class SlotPool extends RpcEndpoint implements SlotPoolGateway, AllocatedS
 	 * @param taskManagerGateway TaskManager gateway
 	 * @param slotOffer the offered slot
 	 * @return True if we accept the offering
+	 *
+	 * 给定一个slot，返回这个slot是否要被当前jm接受
 	 */
 	@Override
 	public CompletableFuture<Boolean> offerSlot(
@@ -925,6 +958,7 @@ public class SlotPool extends RpcEndpoint implements SlotPoolGateway, AllocatedS
 		}
 
 		// check whether we have already using this slot
+		// 如果当前 slot 关联的 AllocationID 已经在 SlotPool 中出现
 		AllocatedSlot existingSlot;
 		if ((existingSlot = allocatedSlots.get(allocationID)) != null ||
 			(existingSlot = availableSlots.get(allocationID)) != null) {
@@ -940,18 +974,23 @@ public class SlotPool extends RpcEndpoint implements SlotPoolGateway, AllocatedS
 			final SlotID newSlotId = new SlotID(taskManagerLocation.getResourceID(), slotOffer.getSlotIndex());
 
 			if (existingSlotId.equals(newSlotId)) {
+				//这个 slot 在之前已经被 SlotPool 接受了，相当于 TaskExecutor 发送了一个重复的 offer
 				log.info("Received repeated offer for slot [{}]. Ignoring.", allocationID);
 
 				// return true here so that the sender will get a positive acknowledgement to the retry
 				// and mark the offering as a success
 				return CompletableFuture.completedFuture(true);
 			} else {
+				//已经有一个其他的 AllocatedSlot 和 这个 AllocationID 关联了，因此不能接受当前的这个 slot
 				// the allocation has been fulfilled by another slot, reject the offer so the task executor
 				// will offer the slot to the resource manager
 				return CompletableFuture.completedFuture(false);
 			}
 		}
 
+		//这个 slot 关联的 AllocationID 此前没有出现过
+
+		//新建一个 AllocatedSlot 对象，表示新分配的 slot
 		final AllocatedSlot allocatedSlot = new AllocatedSlot(
 			allocationID,
 			taskManagerLocation,
@@ -960,23 +999,30 @@ public class SlotPool extends RpcEndpoint implements SlotPoolGateway, AllocatedS
 			taskManagerGateway);
 
 		// check whether we have request waiting for this slot
+		// 检查是否有一个 request 和 这个 AllocationID 关联
 		PendingRequest pendingRequest = pendingRequests.removeKeyB(allocationID);
 		if (pendingRequest != null) {
 			// we were waiting for this!
+			//有一个pending request 正在等待这个 slot
 			allocatedSlots.add(pendingRequest.getSlotRequestId(), allocatedSlot);
 
+			//尝试去完成那个等待的请求
 			if (!pendingRequest.getAllocatedSlotFuture().complete(allocatedSlot)) {
 				// we could not complete the pending slot future --> try to fulfill another pending request
+				//失败了
 				allocatedSlots.remove(pendingRequest.getSlotRequestId());
+				//尝试去满足其他在等待的请求
 				tryFulfillSlotRequestOrMakeAvailable(allocatedSlot);
 			} else {
 				log.debug("Fulfilled slot request [{}] with allocated slot [{}].", pendingRequest.getSlotRequestId(), allocationID);
 			}
 		}
 		else {
+			//没有请求在等待这个slot，可能请求已经被满足了
 			// we were actually not waiting for this:
 			//   - could be that this request had been fulfilled
 			//   - we are receiving the slots from TaskManagers after becoming leaders
+			//尝试去满足其他在等待的请求
 			tryFulfillSlotRequestOrMakeAvailable(allocatedSlot);
 		}
 
@@ -1089,6 +1135,8 @@ public class SlotPool extends RpcEndpoint implements SlotPoolGateway, AllocatedS
 
 	/**
 	 * Check the available slots, release the slot that is idle for a long time.
+	 *
+	 * slotPool 启动的时候会开启一个定时调度的任务，周期性地检查空闲的 slot，如果 slot 空闲时间过长，会将该 slot 归还给 TaskManager:
 	 */
 	private void checkIdleSlot() {
 
@@ -1109,6 +1157,7 @@ public class SlotPool extends RpcEndpoint implements SlotPoolGateway, AllocatedS
 			final AllocationID allocationID = expiredSlot.getAllocationId();
 			if (availableSlots.tryRemove(allocationID)) {
 
+				//将空闲的 slot 归还给 TaskManager
 				log.info("Releasing idle slot [{}].", allocationID);
 				final CompletableFuture<Acknowledge> freeSlotFuture = expiredSlot.getTaskManagerGateway().freeSlot(
 					allocationID,
@@ -1192,6 +1241,9 @@ public class SlotPool extends RpcEndpoint implements SlotPoolGateway, AllocatedS
 		return allocatedSlots;
 	}
 
+	/**
+	 * 列出当前可用的 slot (还没有 payload)
+	 */
 	@VisibleForTesting
 	protected AvailableSlots getAvailableSlots() {
 		return availableSlots;

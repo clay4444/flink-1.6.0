@@ -76,6 +76,8 @@ import java.util.concurrent.TimeUnit;
  *     <li>Queued Scheduling: A request for a task slot is queued and returns a future that will be
  *         fulfilled as soon as a slot becomes available.</li>
  * </ul>
+ *
+ * 任务调度时 LogicalSlot 资源的申请通过 Scheduler 接口进行管理，Scheduler 接口继承了 SlotProvider 接口；
  */
 public class Scheduler implements InstanceListener, SlotAvailabilityListener, SlotProvider {
 
@@ -142,7 +144,9 @@ public class Scheduler implements InstanceListener, SlotAvailabilityListener, Sl
 	//  Scheduling
 	// ------------------------------------------------------------------------
 
-
+	/**
+	 * >>>>>>>>> 核心方法：分配一个slot
+	 */
 	@Override
 	public CompletableFuture<LogicalSlot> allocateSlot(
 			SlotRequestId slotRequestId,

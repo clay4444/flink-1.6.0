@@ -37,6 +37,16 @@ import java.util.function.Function;
 
 /**
  * Implementation of the {@link LogicalSlot} which is used by the {@link SlotPool}.
+ *
+ * LogicalSlot(逻辑上的一个slot)的 一个实现类，task是被分配到一个LogicalSlot上的，
+ *
+ * 实现了AllocatedSlot(具体tm上的slot).Payload接口，所以就是说 SingleLogicalSlot 可以作为 payload(负载/任务) 被分配给 PhysicalSlot(具体的slot)
+ *
+ * 类似地， LogicalSlot 同样规定了其所能承载的 payload , LogicalSlot.Payload 接口的实现类是 Execution，也就是需要被调度执行的一个 task。
+ *
+ * 总结：这个类实现的是：一个 LogicalSlot 映射到一个 PhysicalSlot 上
+ *
+ * 而flink资源共享是如何实现 多个 LogicalSlot 映射到同一个 PhysicalSlot 上的呢？
  */
 public class SingleLogicalSlot implements LogicalSlot, AllocatedSlot.Payload {
 

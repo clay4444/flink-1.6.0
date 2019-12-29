@@ -22,23 +22,34 @@
 
 #### tm 中 slot的管理
 
-大致的过程是这样的，rm先启动，然后tm启动，tm启动时，会和rm建立连接，然后tm会把当前所有slot的情况汇报给rm，在之后的心跳过程中，
-也会把所有slot情况汇报给rm，也就是说rm拥有所有slot的status；
+TaskSlot 是在 TaskExecutor 中对 slot 的抽象，可能处于 Free, Releasing, Allocated, Active 这四种状态之中;
+TaskExecutor 主要通过 TaskSlotTable 来管理它所拥有的所有 slot;
+TaskSlotTable 的 allocateSlot() 方法就是用来将指定 index 的 slot 分配给 AllocationID 对应的请求，(注意这里超时时间的作用)
+
+大致的过程是这样的，rm先启动，然后tm启动，tm启动时，会和rm建立连接，然后tm会把当前所有slot的情况汇报给rm，
+主要的代码逻辑在TaskExecutor类的 establishResourceManagerConnection() 方法中；
+
+在之后的心跳过程中，也会把所有slot情况汇报给rm，也就是说rm拥有所有slot的status；
+主要的代码逻辑在TaskExecutor类的 ResourceManagerHeartbeatListener 这个内部类中；
 
 程序启动时，jobMaster接收jobGraph，转化为ExecutionGraph，然后开始执行，然后会向rm申请资源，rm包含着所有SlotStatus，所以会向
-具体某个tm发起requestSlot rpc调用，传一个jobId，然后tm会rpc调用 JobMaster.offerSlots(); 把slot分配给具体的jm；
+具体某个tm发起requestSlot rpc调用，传一个jobId，
+主要的代码逻辑在TaskExecutor.requestSlot()方法中，这个方法是被rm通过rpc调用的；
+
+然后tm会rpc调用 JobMaster.offerSlots(); 把slot分配给具体的jm；
+主要的代码逻辑在TaskExecutor.offerSlotsToJobManager()方法中，这个方法会rpc调用 jobMasterGateway.offerSlots() 方法；
 
 总结一下，tm对slot的管理是比较简单的，主要通过 TaskSlotTable 来维护所有的slot，rm向tm请求资源，然后tm向jm分配资源；
 
 
 #### rm 中 slot的管理
-rm需要对所有的tm的slot进行管理，jobMaster都是向rm申请资源的；然后rm把请求 "转发" 给tm；tm offer slot 给jm
+rm需要对所有的tm的slot进行管理，jobMaster都是向rm申请资源的；然后rm把请求 "转发" 给tm；tm offer slot 给jm；
 rm主要通过 SlotManager 来对 所有的slot进行管理；SlotManager 主要维护的就是所有slot的状态 和 所有 pending slot request 的状态；
 SlotManager start时，会启动两个线程，一个检测tm是否长期idle状态，是则释放这个tm。另一个检测request是否长时间不被满足，是则取消这个request
 
 SlotManager的主要功能有：
-1. 注册slot，从registerTaskManager开始，注册一个tm的所有slot，每次注册一个slot，都会检查是否满足某个request，是则触发分配slot逻辑
-2. 请求slot，从registerSlotRequest开始，jm发起，如果有free且满足条件的slot，直接分配，否则进等待队列
+1. 注册slot，从 registerTaskManager 开始，注册一个tm的所有slot，每次注册一个slot，都会检查是否满足某个request，是则触发分配slot逻辑
+2. 请求slot，从 registerSlotRequest 开始，jm发起，如果有free且满足条件的slot，直接分配，否则进等待队列
 3. 具体分配逻辑，rpc调用tm的方法，进行分配，tm会把具体的slot offer 给 jm；
 3. 取消slot请求，unregisterSlotRequest，直接cancel掉 slot request 对应的future；
 
@@ -55,7 +66,61 @@ rm的rpc方法中，主要有四个用于管理slot
 最终调用到模板(抽象)方法：stopWorker();
 以yarn为例，动态申请可能就是申请一个container，动态释放可能就是释放一个container
 
-#### jm 中 slot的管理
+#### jm 中 slot 的管理
+比较复杂
+
+- 概念区分：
+1. PhysicalSlot：
+表征的是物理意义上TaskExecutor上的一个slot，(注意1.6版本没有这个类，只有它的子类 AllocatedSlot)，
+AllocatedSlot.Payload 接口代表的是可以分配给具体的slot(AllocatedSlot) 的负载(任务)；实现类：
+    1.SingleLogicalSlot：这个类实现的是：一个 LogicalSlot 映射到一个 PhysicalSlot 上，
+    2.SlotSharingManager.MultiTaskSlot: **flink资源共享实现多个LogicalSlot映射到同一个 PhysicalSlot 上的核心**
+
+
+2. LogicalSlot
+表征逻辑上的一个slot，一个task是部署到一个LogicalSlot上的，但它和物理上一个具体的slot并不是一一对应的。
+由于资源共享等机制的存在，多个LogicalSlot可能被映射到同一个PhysicalSlot上。
+实现类SingleLogicalSlot，
+
+
+- 如何实现资源共享？
+核心主要是SlotSharingManager.TaskSlot内部类，及其两个子类 MultiTaskSlot 和 SingleTaskSlot，他们组成一棵多叉树，这棵树公用一个物理slot
+其中MultiTaskSlot用来代表内部(中间)节点，或者根节点。作为根节点时会有一个 SlotContext，代表一个物理slot
+SingleTaskSlot只能代表叶子节点，
+
+
+- 核心：SlotPool (它只用来管理所有的物理 slot)
+JobManager使用SlotPool来向ResourceManager申请slot，并管理所有分配给该JobManager的slots。这里所说的slot指的都是 physical slot。
+内部有一些容器用来保存所有的slot情况，比如allocatedSlots代表所有分配给当前JobManager的slots；availableSlots代表所有可用的slots(还没装载payload的) ....
+
+大致流程其实可以总结一下，首先executionGraph在jm开始调度执行所有task，首先就需要先申请计算资源，也就是slot，这里会调用 requestAllocatedSlot() 方法；
+方法首先尝试从当前可用的 slot 中获取，没有获取到，就调用requestNewAllocatedSlot()方法来向rm申请新的slot，(rpc调用resourceManagerGateway.requestSlot,上面看了)
+然后tm会通过rpc回调offerSlots()方法，为当前jm分配slot，如果有request在等待这个slot，会直接分配，如果没有，会调用tryFulfillSlotRequestOrMakeAvailable()方法
+来尝试满足其他的slot request，满足的话，也会直接分配，否则，会放进availableSlots容器中；
+
+slotPool启动的时候会开启一个定时调度的任务，周期性地检查空闲的slot，如果slot空闲时间过长，会将该slot归还给 TaskManager: checkIdleSlot()方法
+
+- Scheduler(核心，任务调度时LogicalSlot资源的申请就是通过它来做的) 和 SlotSharingManager
+SlotPool主要负责的是分配给当前JobMaster的PhysicalSlot的管理。但是，具体到每一个Task所需要的计算资源的调度和管理，是按照LogicalSlot进行组织的，
+不同的Task所分配的LogicalSlot各不相同，但它们底层的 PhysicalSlot 可能是同一个。主要的逻辑都封装在 SlotSharingManager 和 Scheduler 中。
+
+前面已经提到过，通过构造一个由TaskSlot构成的树形结构可以实现SlotSharingGroup内的资源共享以及CoLocationGroup的强制约束，这主要就是通过SlotSharingManager来完成的。
+**每一个SlotSharingGroup都会有一个与其对应的 SlotSharingManager**
+
+任务调度时 LogicalSlot 资源的申请通过 Scheduler 接口进行管理，Scheduler 接口继承了 SlotProvider 接口；(这里的源码解析以1.9的为主，1.9和1.6的差别有点大)
+Scheduler主要有两个变量；
+    1.SlotPool
+    2.slotSharingManagers
+所以主要的设计思想也很明显，借助SlotPool来申请PhysicalSlot，借助SlotSharingManager实现slot共享。
+
+Scheduler最核心的方法也就几个
+    1.allocateSlot (job开始调度执行时，调用这个方法来申请 LogicalSlot )
+    。。。。。。
+
+这里主要看一下allocateSlot这个方法的执行过程：
+先看有没有指定SlotSharingGroupId，如果没有指定，说明这个任务不运行slot共享，要独占一个slot，此时会调用allocateSingleSlot()方法，直接从SlotPool中获取PhysicalSlot，然后创建一个LogicalSlot即可：
+如果允许资源共享，此时会调用allocateSharedSlot()方法，这个方法的核心就在于构造TaskSlot 构成的树；细节先跳过把；
+
 
 
 ### 内存管理

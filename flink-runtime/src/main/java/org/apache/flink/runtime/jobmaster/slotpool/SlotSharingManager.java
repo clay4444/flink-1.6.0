@@ -77,6 +77,9 @@ import java.util.function.Function;
  * constraint is uniquely identified by a {@link AbstractID} such that we cannot add a second co-located
  * {@link MultiTaskSlot} to the same root node. Now all co-located tasks will be added to co-located
  * multi task slot.
+ *
+ * flink实现资源共享，多个task共享一个物理slot的关键
+ * 一个 SlotSharingGroup 都会有一个与其对应的 SlotSharingManager
  */
 public class SlotSharingManager {
 
@@ -93,12 +96,16 @@ public class SlotSharingManager {
 	/** Owner of the slots to which to return them when they are released from the outside. */
 	private final SlotOwner slotOwner;
 
+	//所有的TaskSlot，包括 root 和 inner 和 leaf
 	private final Map<SlotRequestId, TaskSlot> allTaskSlots;
 
+	//root MultiTaskSlot，但底层的 Physical Slot 还没有分配好
 	/** Root nodes which have not been completed because the allocated slot is still pending. */
 	@GuardedBy("lock")
 	private final Map<SlotRequestId, MultiTaskSlot> unresolvedRootSlots;
 
+	//root MultiTaskSlot，底层的 physical slot 也已经分配好了，按照两层 map 的方式组织，
+	//可以通过已分配的 Physical slot 所在的TaskManager 的位置进行查找
 	/** Root nodes which have been completed (the underlying allocated slot has been assigned). */
 	@GuardedBy("lock")
 	private final Map<TaskManagerLocation, Set<MultiTaskSlot>> resolvedRootSlots;
@@ -138,6 +145,8 @@ public class SlotSharingManager {
 	 * @param allocatedSlotRequestId slot request id of the underlying allocated slot which can be used
 	 *                               to cancel the pending slot request or release the allocated slot
 	 * @return New root slot
+	 *
+	 * 当需要构造一个新的 TaskSlot 树的时候，需要调用 createRootSlot 来创建根节点：
 	 */
 	MultiTaskSlot createRootSlot(
 			SlotRequestId slotRequestId,
@@ -153,6 +162,7 @@ public class SlotSharingManager {
 		allTaskSlots.put(slotRequestId, rootMultiTaskSlot);
 
 		synchronized (lock) {
+			//先加入到 unresolvedRootSlots 中
 			unresolvedRootSlots.put(slotRequestId, rootMultiTaskSlot);
 		}
 
@@ -161,6 +171,7 @@ public class SlotSharingManager {
 		slotContextFuture.whenComplete(
 			(SlotContext slotContext, Throwable throwable) -> {
 				if (slotContext != null) {
+					//一旦physical slot完成分配，就从 unresolvedRootSlots 中移除，加入到 resolvedRootSlots 中
 					synchronized (lock) {
 						final MultiTaskSlot resolvedRootNode = unresolvedRootSlots.remove(slotRequestId);
 
@@ -213,6 +224,7 @@ public class SlotSharingManager {
 	 */
 	@Nullable
 	MultiTaskSlot getUnresolvedRootSlot(AbstractID groupId) {
+		//找到一个不包含指定 groupId 的 root MultiTaskSlot
 		synchronized (lock) {
 			for (MultiTaskSlot multiTaskSlot : unresolvedRootSlots.values()) {
 				if (!multiTaskSlot.contains(groupId)) {
@@ -269,12 +281,20 @@ public class SlotSharingManager {
 
 	/**
 	 * Base class for all task slots.
+	 * 通过 TaskSlot 来构建一个树形结构，这棵树中的所有逻辑上的slot都在同一个具体的(指物理上的)slot中运行  <<<<<<<<<<    66666啊
+	 *
+	 * 有两个实现类，都在下面，
+	 *  1. MultiTaskSlot
+	 *  2. SingleTaskSlot
+	 *
+	 * MultiTaskSlot 和 SingleTaskSlot 的公共父类是 TaskSlot，通过构造一个由 TaskSlot 构成的树形结构来实现 slot 共享和 CoLocationGroup 的强制约束。
 	 */
 	public abstract static class TaskSlot {
 		// every TaskSlot has an associated slot request id
 		private final SlotRequestId slotRequestId;
 
 		// all task slots except for the root slots have a group id assigned
+		// 除了 root 节点，每个节点都有一个 groupId 用来区分一个 TaskSlot。可能是 JobVertexID，也可能是 CoLocationGroup 的 ID
 		@Nullable
 		private final AbstractID groupId;
 
@@ -312,17 +332,28 @@ public class SlotSharingManager {
 
 	/**
 	 * {@link TaskSlot} implementation which can have multiple other task slots assigned as children.
+	 *
+	 * >>>>>>>>>>>>> flink资源共享实现 多个 LogicalSlot 映射到同一个 PhysicalSlot 上的 核心 <<<<<<<<<<<
+	 * 下面还有个内部类：SingleTaskSlot
+	 *
+	 * MultiTaskSlot 对应树形结构的内部节点，它可以包含多个子节点（可以是MultiTaskSlot，也可以是 SingleTaskSlot）；而 SingleTaskSlot 对应树形结构的叶子结点。
+	 *
+	 * 注意：树的根节点也是 MultiTaskSlot 类型的；
+	 *
+	 * 也实现了 PhysicalSlot.Payload 接口，所以可以被作为一个负载(任务) 分配给一个具体的(指物理上的) slot (注意：指的是在作为根节点的情况下，才能被分配，子节点无法直接作为任务被分配)
 	 */
 	public final class MultiTaskSlot extends TaskSlot implements AllocatedSlot.Payload {
 
-		private final Map<AbstractID, TaskSlot> children;
+
+		private final Map<AbstractID, TaskSlot> children;  //可以有多个孩子，每次孩子既可以是MultiTaskSlot，也可以是 SingleTaskSlot，是一棵多叉树
 
 		// the root node has its parent set to null
 		@Nullable
-		private final MultiTaskSlot parent;
+		private final MultiTaskSlot parent; //父亲节点，肯定是MultiTaskSlot，因为叶子节点只能是 SingleTaskSlot；
 
 		// underlying allocated slot
-		private final CompletableFuture<? extends SlotContext> slotContextFuture;
+		//根节点会被分配一个 SlotContext，SlotContext 代表了其所分配的 TaskExecutor 中的一个物理 slot，这棵树中所有的任务都会在同一个 slot 中运行；
+		private final CompletableFuture<? extends SlotContext> slotContextFuture; //代表一个物理slot，只有根节点有；
 
 		// slot request id of the allocated slot
 		@Nullable
@@ -551,9 +582,14 @@ public class SlotSharingManager {
 	/**
 	 * {@link TaskSlot} implementation which harbours a {@link LogicalSlot}. The {@link SingleTaskSlot}
 	 * cannot have any children assigned.
+	 *
+	 * >>>>>>>>>>>>> flink资源共享实现 多个 LogicalSlot 映射到同一个 PhysicalSlot 上的 核心 <<<<<<<<<<<
+	 * 上面还有个内部类：MultiTaskSlot
+	 *
+	 * SingleTaskSlot 代表一个叶子节点，并且叶子节点只能是 SingleTaskSlot 类型；
 	 */
 	public final class SingleTaskSlot extends TaskSlot {
-		private final MultiTaskSlot parent;
+		private final MultiTaskSlot parent;  //叶子节点只有父节点；
 
 		// future containing a LogicalSlot which is completed once the underlying SlotContext future is completed
 		private final CompletableFuture<SingleLogicalSlot> singleLogicalSlotFuture;
@@ -571,6 +607,7 @@ public class SlotSharingManager {
 			singleLogicalSlotFuture = parent.getSlotContextFuture()
 				.thenApply(
 					(SlotContext slotContext) -> {
+						//在父节点被分配了 PhysicalSlot 后，创建 SingleLogicalSlot
 						LOG.trace("Fulfill single task slot [{}] with slot [{}].", slotRequestId, slotContext.getAllocationId());
 						return new SingleLogicalSlot(
 							slotRequestId,

@@ -40,10 +40,14 @@ import java.util.concurrent.CompletableFuture;
  *     <li>Queued allocating: A request for a task slot is queued and returns a future that will be
  *         fulfilled as soon as a slot becomes available.</li>
  * </ul>
+ *
+ * 用来管理申请 slot 的；
  */
 public interface SlotProvider {
 
 	/**
+	 * 申请 slot，返回值一个 LogicalSlot 的 future
+	 *
 	 * Allocating slot with specific requirement.
 	 *
 	 * @param slotRequestId identifying the slot request

@@ -40,7 +40,9 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  * 
  * <p>Note: Prior to the resource management changes introduced in (Flink Improvement Proposal 6),
  * an AllocatedSlot was allocated to the JobManager as soon as the TaskManager registered at the
- * JobManager. All slots had a default unknown resource profile. 
+ * JobManager. All slots had a default unknown resource profile.
+ *
+ * 在 1.9 中是 PhysicalSlot 的子类，代表tm上一个具体的 slot
  */
 class AllocatedSlot implements SlotContext {
 
@@ -210,6 +212,12 @@ class AllocatedSlot implements SlotContext {
 
 	/**
 	 * Payload which can be assigned to an {@link AllocatedSlot}.
+	 * 负载，
+	 * 通过看上面可以知道，一个负载就是一个可以分配给具体的slot(AllocatedSlot) 的任务 ！
+	 *
+	 * 这个接口有两个实现类，
+	 * 	1.SingleLogicalSlot：用来实现一个task运行在一个具体的slot中；
+	 * 	2.SlotSharingManager.MultiTaskSlot: 用来实现多个task运行在同一个具体的slot中；
 	 */
 	interface Payload {
 
