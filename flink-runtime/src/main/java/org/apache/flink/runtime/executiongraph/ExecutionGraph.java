@@ -898,7 +898,7 @@ public class ExecutionGraph implements AccessExecutionGraph {
 					break;
 
 				case EAGER:  //所有的子任务都立即进行调度，这是 streaming 模式采用的方式
-					newSchedulingFuture = scheduleEager(slotProvider, allocationTimeout);
+					newSchedulingFuture = scheduleEager(slotProvider, allocationTimeout);  //<<<<< 这里
 					break;
 
 				default:
@@ -963,13 +963,13 @@ public class ExecutionGraph implements AccessExecutionGraph {
 		final boolean queued = allowQueuedScheduling;
 
 		// collecting all the slots may resize and fail in that operation without slots getting lost
-		final ArrayList<CompletableFuture<Execution>> allAllocationFutures = new ArrayList<>(getNumberOfExecutionJobVertices());
+		final ArrayList<CompletableFuture<Execution>> allAllocationFutures = new ArrayList<>(getNumberOfExecutionJobVertices()); //所有Execution(代表一个要部署的slot)的资源申请情况；
 
 		// allocate the slots (obtain all their futures
 		for (ExecutionJobVertex ejv : getVerticesTopologically()) {   //遍历所有的ExecutionJobVertex，一个ExecutionJobVertex 就是根据 jobVertex 生成的；
 			// these calls are not blocking, they only return futures
 
-			//通过ExecutionJobVertex申请资源？为所有的ExecutionVertex(Task)申请资源？
+			//通过ExecutionJobVertex申请资源？为所有的ExecutionVertex(Task)申请资源？ yes  但是最终还是通过具体的 ExecutionVertex 的 Execution去申请slot
 			Collection<CompletableFuture<Execution>> allocationFutures = ejv.allocateResourcesForAll(
 				slotProvider,
 				queued,
@@ -989,7 +989,8 @@ public class ExecutionGraph implements AccessExecutionGraph {
 				(Collection<Execution> executionsToDeploy) -> {
 					for (Execution execution : executionsToDeploy) {
 						try {
-							execution.deploy();
+							//启动 Execution
+							execution.deploy();  //<<<< 这里
 						} catch (Throwable t) {
 							throw new CompletionException(
 								new FlinkException(

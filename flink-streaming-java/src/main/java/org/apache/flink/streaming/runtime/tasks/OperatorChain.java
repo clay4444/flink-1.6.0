@@ -109,20 +109,23 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 	 */
 	private StreamStatus streamStatus = StreamStatus.ACTIVE;
 
+	//构造器  在StreamTask的invoke方法中被调用，说明是具体的任务执行的时候，才创建的
 	public OperatorChain(
 			StreamTask<OUT, OP> containingTask,
 			List<StreamRecordWriter<SerializationDelegate<StreamRecord<OUT>>>> streamRecordWriters) {
 
 		final ClassLoader userCodeClassloader = containingTask.getUserCodeClassLoader();
-		final StreamConfig configuration = containingTask.getConfiguration();
+		final StreamConfig configuration = containingTask.getConfiguration();   // <<<<<<<<<<<<<<   看这里，猜对了， 从environment中取出了 StreamConfig；
 
-		headOperator = configuration.getStreamOperator(userCodeClassloader);
+		headOperator = configuration.getStreamOperator(userCodeClassloader);  //获取封装用户代码的 operator， (chain链的第一个operator)
 
+		//OperatorChain 内部所有的 operator 的配置  (回想JobGraph的生成过程，每一个StreamNode都对应一个StreamConfig)
 		// we read the chained configs, and the order of record writer registrations by output name
 		Map<Integer, StreamConfig> chainedConfigs = configuration.getTransitiveChainedTaskConfigsWithSelf(userCodeClassloader);
 
 		// create the final output stream writers
 		// we iterate through all the out edges from this job vertex and create a stream output
+		// 所有的输出边，这是对外输出，不包含内部 operator 之间的的数据传输
 		List<StreamEdge> outEdgesInOrder = configuration.getOutEdgesInOrder(userCodeClassloader);
 		Map<StreamEdge, RecordWriterOutput<?>> streamOutputMap = new HashMap<>(outEdgesInOrder.size());
 		this.streamOutputs = new RecordWriterOutput<?>[outEdgesInOrder.size()];
@@ -130,6 +133,7 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 		// from here on, we need to make sure that the output writers are shut down again on failure
 		boolean success = false;
 		try {
+			//对外输出的 RecordWriterOutput
 			for (int i = 0; i < outEdgesInOrder.size(); i++) {
 				StreamEdge outEdge = outEdgesInOrder.get(i);
 
@@ -145,7 +149,8 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 
 			// we create the chain of operators and grab the collector that leads into the chain
 			List<StreamOperator<?>> allOps = new ArrayList<>(chainedConfigs.size());
-			this.chainEntryPoint = createOutputCollector(
+			//这里会递归调用，为 OperatorChain 内部的所有的 Operator 都创建 output
+			this.chainEntryPoint = createOutputCollector(    // output用来处理当前算子的输出数据
 				containingTask,
 				configuration,
 				chainedConfigs,
@@ -154,7 +159,9 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 				allOps);
 
 			if (headOperator != null) {
+				//chainEntryPoint 是 headOperator 的 output
 				WatermarkGaugeExposingOutput<StreamRecord<OUT>> output = getChainEntryPoint();
+				//header operator 调用 setup 方法
 				headOperator.setup(containingTask, configuration, output);
 
 				headOperator.getMetricGroup().gauge(MetricNames.IO_CURRENT_OUTPUT_WATERMARK, output.getWatermarkGauge());
@@ -292,16 +299,18 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 	//  initialization utilities
 	// ------------------------------------------------------------------------
 
+	//创建 output collector
 	private <T> WatermarkGaugeExposingOutput<StreamRecord<T>> createOutputCollector(
-			StreamTask<?, ?> containingTask,
-			StreamConfig operatorConfig,
-			Map<Integer, StreamConfig> chainedConfigs,
+			StreamTask<?, ?> containingTask,  			//对应的StreamTask
+			StreamConfig operatorConfig,     		   //对应的StreamConfig (chain的头结点)
+			Map<Integer, StreamConfig> chainedConfigs,  //所有chain链(包括内部结点)的 StreamConfig
 			ClassLoader userCodeClassloader,
 			Map<StreamEdge, RecordWriterOutput<?>> streamOutputs,
-			List<StreamOperator<?>> allOperators) {
+			List<StreamOperator<?>> allOperators) {  //初始传进来的是空集合
 		List<Tuple2<WatermarkGaugeExposingOutput<StreamRecord<T>>, StreamEdge>> allOutputs = new ArrayList<>(4);
 
 		// create collectors for the network outputs
+		// OperatorChain 内部 Operator 之间的边
 		for (StreamEdge outputEdge : operatorConfig.getNonChainedOutputs(userCodeClassloader)) {
 			@SuppressWarnings("unchecked")
 			RecordWriterOutput<T> output = (RecordWriterOutput<T>) streamOutputs.get(outputEdge);
@@ -309,6 +318,9 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 			allOutputs.add(new Tuple2<>(output, outputEdge));
 		}
 
+		//创建当前节点的下游节点，并返回当前节点的 output
+		//createChainedOperator 在创建 operator 的时候，会调用 createOutputCollector 为 operator 创建 output
+		//随意会形成递归调用关系，所有的 operator 以及它们的 output 都会被创建出来
 		// Create collectors for the chained outputs
 		for (StreamEdge outputEdge : operatorConfig.getChainedOutputs(userCodeClassloader)) {
 			int outputId = outputEdge.getTargetId();

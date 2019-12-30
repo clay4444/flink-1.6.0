@@ -111,6 +111,8 @@ import java.util.concurrent.atomic.AtomicReference;
  *
  * @param <OUT>
  * @param <OP>
+ *
+ * 可以理解为执行用户代码的容器， tm执行Task的时候，就是反射生成这个类，然后调用 invoke() 方法的过程；
  */
 @Internal
 public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
@@ -199,6 +201,8 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
 	 *
 	 * @param environment The task environment for this task.
 	 * @param timeProvider Optionally, a specific time provider to use.
+	 *
+	 *
 	 */
 	protected StreamTask(
 			Environment environment,
@@ -207,7 +211,7 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
 		super(environment);
 
 		this.timerService = timeProvider;
-		this.configuration = new StreamConfig(getTaskConfiguration());
+		this.configuration = new StreamConfig(getTaskConfiguration());  //  >>>>>>>>>>>>> 核心 StreamConfig 中保存了具体用户代码的operator；
 		this.accumulatorMap = getEnvironment().getAccumulatorRegistry().getUserMap();
 		this.streamRecordWriters = createStreamRecordWriters(configuration, environment);
 	}
@@ -258,6 +262,8 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
 
 			asynchronousCheckpointExceptionHandler = new AsyncCheckpointExceptionHandler(this);
 
+
+			//创建状态存储后端
 			stateBackend = createStateBackend();
 			checkpointStorage = stateBackend.createCheckpointStorage(getEnvironment().getJobID());
 
@@ -275,19 +281,22 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
 				timerService = new SystemProcessingTimeService(this, getCheckpointLock(), timerThreadFactory);
 			}
 
+			//创建 OperatorChain，会加载每一个 operator，并调用 setup 方法
 			//把之前JobGraph串起来的chain的信息形成实现，chain 操作
 			/**
 			 * 第二个要注意的是chain操作。前面提到了，flink会出于优化的角度，把一些算子chain成一个 整体的算子作为一个task来执行。
 			 * 比如wordcount例子中，Source和FlatMap算子就被chain在了一起。在进行chain操作的时候，会设定头节点，并且指定输出的RecordWriter。
 			 * 具体的原理
+			 *
+			 * 这里就看出来了，OperatorChain不是rpc传过来的，是任务在真正执行时 new 出来的；
 			 */
-			operatorChain = new OperatorChain<>(this, streamRecordWriters);
+			operatorChain = new OperatorChain<>(this, streamRecordWriters);  // <<<<<<<<<<<< 猜测一下：应该是从environment中取出 StreamConfig，然后构建OperatorChain的，
 			headOperator = operatorChain.getHeadOperator();
 
 			// task specific initialization
 			//这个init操作的起名非常诡异，
 			//因为这里主要是处理算子采用了自定义的checkpoint检查机制的情况，但是起了一个非常大众脸的名字
-			init();
+			init();    // <<<<<<<<<<<<<  // 和具体 StreamTask 子类相关的初始化操作
 
 			// save the work of reloading state, etc, if the task is already canceled
 			if (canceled) {
@@ -313,7 +322,7 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
 				 * 顺便提一句，flink的keyed算子保存的是对每个数据的key的计算方法，而非真实的key，用户需要自己保证对每一行数据提供的keySelector的幂等性。
 				 * 至于为什么要用KeyGroup的设计，这就牵扯到扩容的范畴了，将在后面的章节进行讲述。
 				 */
-				initializeState();
+				initializeState();  //状态初始化
 				//对于富操作符，执行其open操作
 				// 就是对各种RichOperator执行其open方法，通常可用于在执行计算之前加载资源。
 				openAllOperators();
@@ -332,7 +341,7 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
 			 * 最终调用到run方法，该方法经过一系列跳转，最终调用chain上的第一个算子的run方法。
 			 * 在wordcount的例子中，它最终调用了SocketTextStreamFunction的run，建立socket连接并读入文本。
 			 */
-			run();
+			run();  //开始处理数据，这里通常是个循环, 模板方法，不同的子类，对应不用的实现
 
 			// if this left the run() method cleanly despite the fact that this was canceled,
 			// make sure the "clean shutdown" is not attempted

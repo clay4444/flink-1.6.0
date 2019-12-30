@@ -526,7 +526,7 @@ public class ExecutionJobVertex implements AccessExecutionJobVertex, Archiveable
 	}
 
 	/**
-	 * 为当前 ExecutionJobVertex 的所有 ExecutionVertex 申请资源，一个ExecutionVertex就对应一个具体要执行的Task，也就需要申请一个Slot，
+	 * 为当前 ExecutionJobVertex 的所有 ExecutionVertex 申请资源，一个ExecutionVertex就对应一个具体要执行的Task，也就需要申请一个LogicalSlot，
 	 *
 	 *
 	 * Acquires a slot for all the execution vertices of this ExecutionJobVertex. The method returns

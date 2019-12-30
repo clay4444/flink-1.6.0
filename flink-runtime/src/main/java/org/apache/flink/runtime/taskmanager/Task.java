@@ -122,6 +122,8 @@ import static org.apache.flink.util.Preconditions.checkState;
  * produce (if any).
  *
  * <p>Each Task is run by one dedicated thread.
+ *
+ * Task 实现了 Runnable 接口，每个 Task 都会在一个单独的线程中运行
  */
 public class Task implements Runnable, TaskActions, CheckpointListener {
 
@@ -628,7 +630,7 @@ public class Task implements Runnable, TaskActions, CheckpointListener {
 
 			LOG.info("Registering task at network: {}.", this);
 
-			//然后，是向网络管理器注册当前任务（flink的各个算子在运行时进行数据交换需要依赖网络管理器），分配一些缓存以保存数据
+			//向网络栈中注册 Task,为 ResultPartition 和 InputGate 分配缓冲池，和之前分析的 数据的输入和输出 的源码解析又联系在了一起，
 			network.registerTask(this);
 
 			// add metrics for buffers
@@ -682,6 +684,7 @@ public class Task implements Runnable, TaskActions, CheckpointListener {
 			TaskKvStateRegistry kvStateRegistry = network.createKvStateTaskRegistry(jobId, getJobVertexId());
 
 			// 然后，再把task创建时传入的那一大堆变量用于创建一个执行环境Envrionment。
+			//这个 Environment 中封装着这个task的所有信息，最核心的是 StreamConfig， 这个配置类中封装着一个Task具体要执行的信息(用户代码operator)  <<<<<  重要，千万不要忽略
 			Environment env = new RuntimeEnvironment(
 				jobId,
 				vertexId,
@@ -708,11 +711,12 @@ public class Task implements Runnable, TaskActions, CheckpointListener {
 				this);
 
 			// now load and instantiate the task's invokable code
-			//通过反射生成对象，这个invokable是在解析JobGraph的时候生成相关信息的，并在此处形成真正可执行的对象
-			// invokable 就是几种任务的可执行抽象（可以被taskmanager可以直接执行的），
-			// 也就是说flink的tm只能执行几种类型的任务，loadAndInstantiateInvokable就是把用户的opertion转换为对应类型的任务
-			// 具体解析可以 查看 StreamTask 的 代码解析
-			invokable = loadAndInstantiateInvokable(userCodeClassLoader, nameOfInvokableClass, env);
+			// nameOfInvokableClass 是 JobVertex 的 invokableClassName，
+			// 每一个 StreamNode 在添加的时候都会有一个 jobVertexClass 属性
+			// 对于一个 operator chain，就是 head operator 对应的 invokableClassName，见 StreamingJobGraphGenerator.createChain
+			// 通过反射创建 AbstractInvokable 对象
+			// 对于 Stream 任务而言，就是 StreamTask 的子类，SourceStreamTask、OneInputStreamTask、TwoInputStreamTask 等
+			invokable = loadAndInstantiateInvokable(userCodeClassLoader, nameOfInvokableClass, env); // <<<<  这里还有重要注释
 
 			// ----------------------------------------------------------------
 			//  actual task core work
@@ -743,7 +747,7 @@ public class Task implements Runnable, TaskActions, CheckpointListener {
 			// run the invokable
 			// 最重要的方法；因为这个方法就是用户代码所真正被执行的入口。比如我们写的什么 new MapFunction()的逻辑，
 			// 最终就是在这里被执行的。这里说一下这个invokable，这是一个抽象类，提供了可以被TaskManager执行的对象的基本抽象。
-			invokable.invoke();
+			invokable.invoke(); //这里，真正执行了，但是operator是什么时候赋值进去的呢？？？？？ <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< 问题  答案看loadAndInstantiateInvokable()方法注释
 
 			// make sure, we enter the catch block if the task leaves the invoke() method due
 			// to the fact that it has been canceled
@@ -751,6 +755,7 @@ public class Task implements Runnable, TaskActions, CheckpointListener {
 				throw new CancelTaskException();
 			}
 
+			// 正常结束
 			// ----------------------------------------------------------------
 			//  finalization of a successful execution
 			//  6. 成功执行任务，
@@ -1456,8 +1461,14 @@ public class Task implements Runnable, TaskActions, CheckpointListener {
 	 *
 	 * @return The instantiated invokable task object.
 	 *
-	 * @throws Throwable Forwards all exceptions that happen during initialization of the task.
-	 *                   Also throws an exception if the task class misses the necessary constructor.
+	 * 注：这里如果又忘记了， 可以看一下 StreamGraph 的 addOperator() 方法，简单说一下就是flink把任务预先分成了几种类型，SourceStreamTask / OneInputStreamTask ...
+	 * 在构建图的过程中，用户的代码逻辑是按照三层逻辑去封装的： DataStream -> transformation -> StreamOperator，但是上面的类型和用户代码封装逻辑是没关系的，是另外一套东西，这里不要弄混了
+	 * 在往StreamGraph图中加入StreamNode的时候，会根据operator的类型，来加入一个ClassName(SourceStreamTask.class / OneInputStreamTask.class)， 这个ClassName对应的就是这里的 ClassName，他们的父类都是 AbstractInvokable
+	 *
+	 * 根据任务类型， 反射生成 AbstractInvokable 实例；
+	 *
+	 * 问题：这里反射生成的是 AbstractInvokable 实例，但是用户的代码是封装在operator中的， 这俩是如何联系起来的呢？
+	 * 答： 核心是 Environment 这个类，创建具体的StreamTask的时候，都是调用的带 Environment 参数的构造器，这个 Environment 中封装着这个task的所有信息，最核心的是 StreamConfig， 这个配置类中封装着一个Task具体要执行的信息(用户代码operator)
 	 */
 	private static AbstractInvokable loadAndInstantiateInvokable(
 		ClassLoader classLoader,
@@ -1466,7 +1477,7 @@ public class Task implements Runnable, TaskActions, CheckpointListener {
 
 		final Class<? extends AbstractInvokable> invokableClass;
 		try {
-			invokableClass = Class.forName(className, true, classLoader)
+			invokableClass = Class.forName(className, true, classLoader) //反射
 				.asSubclass(AbstractInvokable.class);
 		} catch (Throwable t) {
 			throw new Exception("Could not load the task's invokable class.", t);
@@ -1475,7 +1486,7 @@ public class Task implements Runnable, TaskActions, CheckpointListener {
 		Constructor<? extends AbstractInvokable> statelessCtor;
 
 		try {
-			statelessCtor = invokableClass.getConstructor(Environment.class);
+			statelessCtor = invokableClass.getConstructor(Environment.class);  //获得这个StreamTask的这个构造器，只有 Environment 这一个参数的；
 		} catch (NoSuchMethodException ee) {
 			throw new FlinkException("Task misses proper constructor", ee);
 		}
@@ -1483,7 +1494,7 @@ public class Task implements Runnable, TaskActions, CheckpointListener {
 		// instantiate the class
 		try {
 			//noinspection ConstantConditions  --> cannot happen
-			return statelessCtor.newInstance(environment);
+			return statelessCtor.newInstance(environment);   //用这个带Environment参数的构造器，来new 实例  <<<<<<< 重要
 		} catch (InvocationTargetException e) {
 			// directly forward exceptions from the eager initialization
 			throw e.getTargetException();

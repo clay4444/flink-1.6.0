@@ -442,6 +442,8 @@ public class Execution implements AccessExecution, Archiveable<ArchivedExecution
 	}
 
 	/**
+	 * Execution代表ExecutionVertex的一次执行，也就是要部署的一个task，这里是要向 slot provider(Scheduler) 申请一个 LogicalSlot，用来运行这要部署的Task
+	 *
 	 * Allocates and assigns a slot obtained from the slot provider to the execution.
 	 *
 	 * @param slotProvider to obtain a new slot from
@@ -452,7 +454,7 @@ public class Execution implements AccessExecution, Archiveable<ArchivedExecution
 	 * 			or with an exception if an error occurred.
 	 * @throws IllegalExecutionStateException if this method has been called while not being in the CREATED state
 	 */
-	public CompletableFuture<Execution> allocateAndAssignSlotForExecution(
+	public CompletableFuture<Execution> allocateAndAssignSlotForExecution(  //请求分配一个slot
 			SlotProvider slotProvider,
 			boolean queued,
 			LocationPreferenceConstraint locationPreferenceConstraint,
@@ -494,7 +496,7 @@ public class Execution implements AccessExecution, Archiveable<ArchivedExecution
 			final CompletableFuture<LogicalSlot> logicalSlotFuture = preferredLocationsFuture
 				.thenCompose(
 					(Collection<TaskManagerLocation> preferredLocations) ->
-						slotProvider.allocateSlot(
+						slotProvider.allocateSlot(    // >>>>>>>>>>>>>>>>>>>>> 核心，最终通过 slotProvider(底层就是Scheduler类) 的 allocateSlot() 方法，这个方法已经在计算资源管理内一节做了解析，这里就联系起来了 ！！！！！！
 							slotRequestId,
 							toSchedule,
 							queued,
@@ -540,8 +542,11 @@ public class Execution implements AccessExecution, Archiveable<ArchivedExecution
 	 */
 
 	/**
-	 * executiongraph 执行的时候，最终调用到这里
-	 * @throws JobException
+	 * ExecutionGraph 执行的时候，最终调用到这里， 核心主要是生成 TaskDeploymentDescription，然后通过rpc调用tm的 submitTask() 方法，来部署任务；
+	 *
+	 * Execution 是 ExecutionVertex 的一次执行，在调度的时候会先生成对任务的描述 TaskDeploymentDescription， TaskDeploymentDescription 包含了对输入的描述 InputGateDeploymentDescriptor,
+	 * 对输出的描述 ResultPartitionDeploymentDescriptor，以及保存了这个 Task 中运行的所有算子运行时信息的 TaskInformation 和 JobInformation。
+	 * 生成了 TaskDeploymentDescription 通过 RPC 调用提交给 TaskExecutor 执行。
 	 */
 	public void deploy() throws JobException {
 		final LogicalSlot slot  = assignedResource;
@@ -588,7 +593,8 @@ public class Execution implements AccessExecution, Archiveable<ArchivedExecution
 						attemptNumber, getAssignedResourceLocation().getHostname()));
 			}
 
-			// 生成了一个task部署的描述，交给 taskManagerGateway 去提交任务
+			// 生成了一个task部署的描述，交给 taskManagerGateway 去提交任务，vertex是 ExecutionVertex；
+			// 包含了对输入的描述 InputGateDeploymentDescriptor,对输出的描述 ResultPartitionDeploymentDescriptor,以及保存了这个 Task 中运行的所有算子运行时信息的 TaskInformation 和 JobInformation。
 			final TaskDeploymentDescriptor deployment = vertex.createDeploymentDescriptor(
 				attemptId,
 				slot,

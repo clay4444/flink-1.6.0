@@ -766,6 +766,8 @@ public class ExecutionVertex implements AccessExecutionVertex, Archiveable<Archi
 	}
 
 	/**
+	 * 创建一个任务部署的描述，来部署一个 subtask 到 指定的slot
+	 *
 	 * Creates a task deployment descriptor to deploy a subtask to the given target slot.
 	 * TODO: This should actually be in the EXECUTION
 	 */

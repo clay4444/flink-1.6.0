@@ -310,6 +310,7 @@ public class JobMaster extends FencedRpcEndpoint<JobMasterId> implements JobMast
 	}
 
 	/**
+	 * 启动rpc服务，然后执行job
 	 * Start the rpc service and begin to run the job.
 	 *
 	 * @param newJobMasterId The necessary fencing token to run the job
@@ -318,9 +319,9 @@ public class JobMaster extends FencedRpcEndpoint<JobMasterId> implements JobMast
 	 */
 	public CompletableFuture<Acknowledge> start(final JobMasterId newJobMasterId, final Time timeout) throws Exception {
 		// make sure we receive RPC and async calls
-		super.start();
+		super.start();  //启动rpc 服务
 
-		return callAsyncWithoutFencing(() -> startJobExecution(newJobMasterId), timeout);
+		return callAsyncWithoutFencing(() -> startJobExecution(newJobMasterId), timeout);  // startJobExecution 这里
 	}
 
 	/**

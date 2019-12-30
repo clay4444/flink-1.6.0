@@ -435,6 +435,7 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 	// Task lifecycle RPCs
 	// ----------------------------------------------------------------------
 
+	//供jm调用的rpc方法，作用是提交一个task到当前的tm上执行；
 	@Override
 	public CompletableFuture<Acknowledge> submitTask(
 			TaskDeploymentDescriptor tdd,
@@ -529,6 +530,10 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 				taskRestore,
 				checkpointResponder);
 
+			/**
+			 * 当 TaskDeploymentDescription 被提交到 TaskExecutor 后，TaskExecutor 会据此创建一个 Task 对象，并在构造函数中完成一些初始化操作，
+			 * 如根据 InputGateDeploymentDescriptor 创建 InputGate，根据 ResultPartitionDeploymentDescriptor 创建 ResultPartition。
+			 */
 			Task task = new Task(
 				jobInformation,
 				taskInformation,

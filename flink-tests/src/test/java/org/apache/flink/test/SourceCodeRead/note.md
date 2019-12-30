@@ -93,6 +93,8 @@ SingleTaskSlot只能代表叶子节点，
 JobManager使用SlotPool来向ResourceManager申请slot，并管理所有分配给该JobManager的slots。这里所说的slot指的都是 physical slot。
 内部有一些容器用来保存所有的slot情况，比如allocatedSlots代表所有分配给当前JobManager的slots；availableSlots代表所有可用的slots(还没装载payload的) ....
 
+下面的流程第一句有点问题，开始调度执行task的时候，不是直接向SlotPool申请资源的，而是向Scheduler申请logical slot的，Scheduler再根据slotShareingGroup的设置，决定何时向slot pool 申请physicalslot；
+
 大致流程其实可以总结一下，首先executionGraph在jm开始调度执行所有task，首先就需要先申请计算资源，也就是slot，这里会调用 requestAllocatedSlot() 方法；
 方法首先尝试从当前可用的 slot 中获取，没有获取到，就调用requestNewAllocatedSlot()方法来向rm申请新的slot，(rpc调用resourceManagerGateway.requestSlot,上面看了)
 然后tm会通过rpc回调offerSlots()方法，为当前jm分配slot，如果有request在等待这个slot，会直接分配，如果没有，会调用tryFulfillSlotRequestOrMakeAvailable()方法

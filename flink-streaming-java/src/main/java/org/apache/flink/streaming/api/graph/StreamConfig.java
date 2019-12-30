@@ -105,6 +105,7 @@ public class StreamConfig implements Serializable {
 	//  Config
 	// ------------------------------------------------------------------------
 
+	//嗨，StreamConfig 内部保存的还是一个 Configuration类； 真是醉了。。。。。。
 	private final Configuration config;
 
 	public StreamConfig(Configuration config) {
@@ -223,9 +224,10 @@ public class StreamConfig implements Serializable {
 		}
 	}
 
+	//通过一个classloader，加载用户的 StreamOperator (封装着用户代码)
 	public <T extends StreamOperator<?>> T getStreamOperator(ClassLoader cl) {
 		try {
-			return InstantiationUtil.readObjectFromConfig(this.config, SERIALIZEDUDF, cl);
+			return InstantiationUtil.readObjectFromConfig(this.config, SERIALIZEDUDF, cl);  //这里，实例化用户代码
 		}
 		catch (ClassNotFoundException e) {
 			String classLoaderInfo = ClassLoaderUtil.getUserCodeClassLoaderInfo(cl);

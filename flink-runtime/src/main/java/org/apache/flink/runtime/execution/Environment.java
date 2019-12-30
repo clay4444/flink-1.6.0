@@ -45,6 +45,14 @@ import java.util.Map;
 import java.util.concurrent.Future;
 
 /**
+ * 封装着一个具体要执行的Task的所有信息；
+ *
+ * 环境使在任务 (StreamTask) 中执行的代码可以访问任务的属性，
+ * （例如名称，并行性），配置，数据流读取器和写入器，
+ *  以及TaskManager提供的各种组件，例如
+ *  内存管理器，I / O管理器，...
+ *
+ *
  * The Environment gives the code executed in a task access to the task's properties
  * (such as name, parallelism), the configurations, the data stream readers and writers,
  * as well as the various components that are provided by the TaskManager, such as
