@@ -23,6 +23,9 @@ import org.apache.flink.streaming.api.functions.source.SourceFunction;
 import org.apache.flink.util.FlinkException;
 
 /**
+ * 这个源的实现还挺有意思的；
+ * 当从检查点协调器接收到触发消息时，实现此接口的源不触发检查点，而是当其输入数据/事件指示应触发检查点时，才触发检查点。
+ *
  * Sources that implement this interface do not trigger checkpoints when receiving a
  * trigger message from the checkpoint coordinator, but when their input data/events
  * indicate that a checkpoint should be triggered.

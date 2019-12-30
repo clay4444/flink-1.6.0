@@ -119,7 +119,7 @@ public class StreamInputProcessor<IN> {
 			IOManager ioManager,
 			Configuration taskManagerConfig,
 			StreamStatusMaintainer streamStatusMaintainer,
-			OneInputStreamOperator<IN, ?> streamOperator,
+			OneInputStreamOperator<IN, ?> streamOperator,  //传递的就是 head operator
 			TaskIOMetricGroup metrics,
 			WatermarkGauge watermarkGauge) throws IOException {
 
@@ -156,14 +156,6 @@ public class StreamInputProcessor<IN> {
 
 	/**
 	 * 处理输入的数据，包括用户数据、watermark 和 checkpoint数据等
-	 * 到这里整个flink数据流转的过程就结束了，简单总结一下：
-	 * 1.启动一个环境
-	 * 2.生成StreamGraph
-	 * 3.注册和选举JobManager
-	 * 4.在各节点生成TaskManager，并根据JobGraph生成对应的Task
-	 * 5.启动各个task，准备执行代码
-	 * @return
-	 * @throws Exception
 	 */
 	public boolean processInput() throws Exception {
 		if (isFinished) {
@@ -178,19 +170,22 @@ public class StreamInputProcessor<IN> {
 			}
 		}
 
-		//这个while是用来处理单个元素的（不要想当然以为是循环处理元素的）
+		//这里虽然是一个while循环，但其实只会处理一条记录，因为单条记录可能需要多个 buffer 传输
 		while (true) {
 			//注意 1在下面
 			// 2.接下来，会利用这个反序列化器得到下一个数据记录，并进行解析（是用户数据还是watermark等等），然后进行对应的操作
 			if (currentRecordDeserializer != null) {
+				//反序列化
 				DeserializationResult result = currentRecordDeserializer.getNextRecord(deserializationDelegate);
 
 				if (result.isBufferConsumed()) {
+					//如果buffer里面的数据已经被消费了，则归还buffer
 					currentRecordDeserializer.getCurrentBuffer().recycleBuffer();
 					currentRecordDeserializer = null;
 				}
 
 				if (result.isFullRecord()) {
+					//得到了一条完整的记录
 					StreamElement recordOrMark = deserializationDelegate.getInstance();
 
 					//如果元素是watermark，就准备更新当前channel的watermark 值（并不是简单赋值，因为有乱序存在），
@@ -217,23 +212,25 @@ public class StreamInputProcessor<IN> {
 					//这里就是真正的，用户的代码即将被执行的地方。从章节1到这里足足用了三万字，有点万里长征的感觉
 					} else {
 						// now we can do the actual processing
+						//是一条正常的记录，调用 operator 的处理方法，最终会调用用户自定义的函数的处理方法
 						StreamRecord<IN> record = recordOrMark.asRecord();
 						synchronized (lock) {
 							numRecordsIn.inc();
 							streamOperator.setKeyContextElement1(record);
 							streamOperator.processElement(record);
 						}
+						//处理完一条记录，结束本次调用
 						return true;
 					}
 				}
 			}
-			//1.程序首先获取下一个buffer
-			//这一段代码是服务于flink的FaultTorrent机制的，后面我会讲到，这里只需理解到它会尝试获取buffer，然后赋值给当前的反序列化器
-			//每个元素都会触发这一段逻辑，如果下一个数据是buffer，则从外围的while循环里进入处理用户数据的逻辑；这个方法里默默的处理了barrier的逻辑
-			// 处理barrier的过程在这段代码里没有体现，因为被包含在了 getNextNonBlocked() 方法中， 我们看下这个方法的核心逻辑：
+
+			//获取下一个 BufferOrEvent，这是个阻塞的调用
 			final BufferOrEvent bufferOrEvent = barrierHandler.getNextNonBlocked();
 			if (bufferOrEvent != null) {
 				if (bufferOrEvent.isBuffer()) {
+					//如果是Buffer，要确定是哪个 channel 的，然后用对应 channel 的反序列化器解析
+					//不同channel在反序列化的时候不能混淆
 					currentChannel = bufferOrEvent.getChannelIndex();
 					currentRecordDeserializer = recordDeserializers[currentChannel];
 					currentRecordDeserializer.setNextBuffer(bufferOrEvent.getBuffer());
@@ -247,6 +244,7 @@ public class StreamInputProcessor<IN> {
 				}
 			}
 			else {
+				//表明上游结束了
 				isFinished = true;
 				if (!barrierHandler.isEmpty()) {
 					throw new IllegalStateException("Trailing data in checkpoint barrier handler.");

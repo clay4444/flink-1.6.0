@@ -40,6 +40,9 @@ import org.apache.flink.util.FlinkException;
  * @param <OUT> Type of the output elements of this source.
  * @param <SRC> Type of the source function for the stream source operator
  * @param <OP> Type of the stream source operator
+ *
+ * 继承自 StreamTask(继承自AbstractInvokeable，任务执行时，就是执行的它的invoke方法)，
+ * SourceStreamTask 负责为下游任务生成数据，因此它没有输入，只负责对外输出记录。
  */
 @Internal
 public class SourceStreamTask<OUT, SRC extends SourceFunction<OUT>, OP extends StreamSource<OUT, SRC>>
@@ -51,6 +54,7 @@ public class SourceStreamTask<OUT, SRC extends SourceFunction<OUT>, OP extends S
 		super(env);
 	}
 
+	//重写init方法，上游的invoke方法会调用这个方法；
 	@Override
 	protected void init() {
 		// does not hold any resources, so no initialization needed
@@ -58,6 +62,7 @@ public class SourceStreamTask<OUT, SRC extends SourceFunction<OUT>, OP extends S
 		// we check if the source is actually inducing the checkpoints, rather
 		// than the trigger ch
 		SourceFunction<?> source = headOperator.getUserFunction();
+		// 如果用户提供的 SourceFunction 是 ExternallyInducedSource，则需要创建一个 CheckpointTrigger 对象提供给 ExternallyInducedSource
 		if (source instanceof ExternallyInducedSource) {
 			externallyInducedCheckpoints = true;
 
@@ -96,6 +101,9 @@ public class SourceStreamTask<OUT, SRC extends SourceFunction<OUT>, OP extends S
 
 	@Override
 	protected void run() throws Exception {
+		//对source而言，就是调用 head operator 的 run 方法
+		//head operator 是一个 StreamSource，最终会调用用户提供的 SourceFunction 的 run 方法，一般是一个循环
+		//head operator 通过 Output 将数据传递给下游的算子
 		headOperator.run(getCheckpointLock(), getStreamStatusMaintainer());
 	}
 

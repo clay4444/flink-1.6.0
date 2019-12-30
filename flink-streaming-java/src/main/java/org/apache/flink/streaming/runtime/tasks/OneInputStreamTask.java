@@ -33,6 +33,11 @@ import javax.annotation.Nullable;
 
 /**
  * A {@link StreamTask} for executing a {@link OneInputStreamOperator}.
+ *
+ * 继承自 StreamTask(继承自AbstractInvokeable，任务执行时，就是执行的它的invoke方法)，
+ * 它的主要执行逻辑就是不断循环调用 StreamInputProcessor.processInpt() 方法。
+ *
+ * StreamInputProcessor 从缓冲区中读取记录或 watermark 等消息，然后调用 streamOperator.processElement(record) 交给 head operator 进行处理，并依次将处理结果交给下游算子。
  */
 @Internal
 public class OneInputStreamTask<IN, OUT> extends StreamTask<OUT, OneInputStreamOperator<IN, OUT>> {
@@ -75,6 +80,8 @@ public class OneInputStreamTask<IN, OUT> extends StreamTask<OUT, OneInputStreamO
 	 */
 	@Override
 	public void init() throws Exception {
+
+		//创建一个 StreamInputProcessor
 		StreamConfig configuration = getConfiguration();
 
 		TypeSerializer<IN> inSerializer = configuration.getTypeSerializerIn1(getUserCodeClassLoader());
@@ -116,7 +123,7 @@ public class OneInputStreamTask<IN, OUT> extends StreamTask<OUT, OneInputStreamO
 		// cache processor reference on the stack, to make the code more JIT friendly
 		final StreamInputProcessor<IN> inputProcessor = this.inputProcessor;
 
-		//processInput，处理输入数据
+		//循环调用 StreamInputProcessor.processInput 方法
 		while (running && inputProcessor.processInput()) {
 			// all the work happens in the "processInput" method
 		}

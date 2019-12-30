@@ -416,7 +416,7 @@ public class Task implements Runnable, TaskActions, CheckpointListener {
 		// finally, create the executing thread, but do not start it
 		// 最后，创建一个Thread对象，并把自己放进该对象，这样在执行时，自己就有了自身的线程的引用。
 
-		executingThread = new Thread(TASK_THREADS_GROUP, this, taskNameWithSubtask);
+		executingThread = new Thread(TASK_THREADS_GROUP, this, taskNameWithSubtask);   //执行的时候，就是执行的这个Thread
 	}
 
 	// ------------------------------------------------------------------------

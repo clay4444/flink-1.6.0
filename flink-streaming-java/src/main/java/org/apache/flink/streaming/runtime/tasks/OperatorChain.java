@@ -96,7 +96,7 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 
 	private final RecordWriterOutput<?>[] streamOutputs;
 
-	private final WatermarkGaugeExposingOutput<StreamRecord<OUT>> chainEntryPoint;
+	private final WatermarkGaugeExposingOutput<StreamRecord<OUT>> chainEntryPoint;  //chain 链头节点的 output
 
 	//只需要将数据交给 headOperator 就可以了，对外界来说，只和这个operator接触(其他的operator会在 ChainingOutput 这个内部类中直接处理)，这就是内个入度为1的operator，
 	private final OP headOperator;
@@ -133,7 +133,7 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 		// from here on, we need to make sure that the output writers are shut down again on failure
 		boolean success = false;
 		try {
-			//对外输出的 RecordWriterOutput
+			//对外输出的 RecordWriterOutput (往ResultPartition中写的)
 			for (int i = 0; i < outEdgesInOrder.size(); i++) {
 				StreamEdge outEdge = outEdgesInOrder.get(i);
 
@@ -155,7 +155,7 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 				configuration,
 				chainedConfigs,
 				userCodeClassloader,
-				streamOutputMap,
+				streamOutputMap, //所有对外输出的边(不包含chain的内部节点) 和 output 的 映射关系
 				allOps);
 
 			if (headOperator != null) {
@@ -305,27 +305,28 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 			StreamConfig operatorConfig,     		   //对应的StreamConfig (chain的头结点)
 			Map<Integer, StreamConfig> chainedConfigs,  //所有chain链(包括内部结点)的 StreamConfig
 			ClassLoader userCodeClassloader,
-			Map<StreamEdge, RecordWriterOutput<?>> streamOutputs,
+			Map<StreamEdge, RecordWriterOutput<?>> streamOutputs,  //所有对外输出的边(不包含chain的内部节点) 和 output 的 映射关系
 			List<StreamOperator<?>> allOperators) {  //初始传进来的是空集合
 		List<Tuple2<WatermarkGaugeExposingOutput<StreamRecord<T>>, StreamEdge>> allOutputs = new ArrayList<>(4);
 
 		// create collectors for the network outputs
-		// OperatorChain 内部 Operator 之间的边
+		// 先创建chain链中最后一个operator的output，因为最后一个operator的output肯定是RecordWriterOutput，数据要写入到 ResultPartition 中；
 		for (StreamEdge outputEdge : operatorConfig.getNonChainedOutputs(userCodeClassloader)) {
 			@SuppressWarnings("unchecked")
 			RecordWriterOutput<T> output = (RecordWriterOutput<T>) streamOutputs.get(outputEdge);
 
-			allOutputs.add(new Tuple2<>(output, outputEdge));
+			allOutputs.add(new Tuple2<>(output, outputEdge));  //最后一个operator的output已经创建好了；
 		}
 
-		//创建当前节点的下游节点，并返回当前节点的 output
-		//createChainedOperator 在创建 operator 的时候，会调用 createOutputCollector 为 operator 创建 output
-		//随意会形成递归调用关系，所有的 operator 以及它们的 output 都会被创建出来
 		// Create collectors for the chained outputs
+		// OperatorChain 内部 Operator 之间的边
 		for (StreamEdge outputEdge : operatorConfig.getChainedOutputs(userCodeClassloader)) {
-			int outputId = outputEdge.getTargetId();
-			StreamConfig chainedOpConfig = chainedConfigs.get(outputId);
+			int outputId = outputEdge.getTargetId();   //targetId，所以取得是这条边的下游节点；
+			StreamConfig chainedOpConfig = chainedConfigs.get(outputId);  //下游节点的StreamConfig
 
+			//创建当前节点的下游节点，并返回当前节点的 output
+			//createChainedOperator 在创建 operator 的时候，会调用 createOutputCollector 为 operator 创建 output
+			//所以会形成递归调用关系，所有的 operator 以及它们的 output 都会被创建出来
 			WatermarkGaugeExposingOutput<StreamRecord<T>> output = createChainedOperator(
 				containingTask,
 				chainedOpConfig,
@@ -344,10 +345,12 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 
 		if (selectors == null || selectors.isEmpty()) {
 			// simple path, no selector necessary
+			//只有一个输出
 			if (allOutputs.size() == 1) {
 				return allOutputs.get(0).f0;
 			}
 			else {
+				//不止有一个输出，需要使用 BroadcastingOutputCollector 进行封装
 				// send to N outputs. Note that this includes teh special case
 				// of sending to zero outputs
 				@SuppressWarnings({"unchecked", "rawtypes"})
@@ -367,6 +370,7 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 			}
 		}
 		else {
+			// 存在 selector，用 DirectedOutput 进行封装
 			// selector present, more complex routing necessary
 
 			// This is the inverse of creating the normal ChainingOutput.
@@ -381,6 +385,11 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 		}
 	}
 
+	/**
+	 * 创建chain链内部某个operator的output
+	 *
+	 * 这里的主要逻辑其实就是递归地创建 OpeartorChain 内部所有的 StreamOperator，并为每一个 StreamOperator 创建 Output collecto，结合本文上面对 Output 的介绍应该就很容易理解了。
+	 */
 	private <IN, OUT> WatermarkGaugeExposingOutput<StreamRecord<IN>> createChainedOperator(
 			StreamTask<?, ?> containingTask,
 			StreamConfig operatorConfig,
@@ -390,7 +399,8 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 			List<StreamOperator<?>> allOperators,
 			OutputTag<IN> outputTag) {
 		// create the output that the operator writes to first. this may recursively create more operators
-		WatermarkGaugeExposingOutput<StreamRecord<OUT>> chainedOperatorOutput = createOutputCollector(
+		// 为当前 Operator 创建 output
+		WatermarkGaugeExposingOutput<StreamRecord<OUT>> chainedOperatorOutput = createOutputCollector( //这里又递归调用 createOutputCollector；
 			containingTask,
 			operatorConfig,
 			chainedConfigs,
@@ -399,19 +409,22 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 			allOperators);
 
 		// now create the operator and give it the output collector to write its output to
+		//从 StreamConfig 中取出当前 Operator
 		OneInputStreamOperator<IN, OUT> chainedOperator = operatorConfig.getStreamOperator(userCodeClassloader);
 
 		chainedOperator.setup(containingTask, operatorConfig, chainedOperatorOutput);
 
 		allOperators.add(chainedOperator);
 
-		WatermarkGaugeExposingOutput<StreamRecord<IN>> currentOperatorOutput;
-		if (containingTask.getExecutionConfig().isObjectReuseEnabled()) {
-			currentOperatorOutput = new ChainingOutput<>(chainedOperator, this, outputTag);
+		//这里是在为当前 operator 前向的 operator 创建 output
+		//所以当前 operator 被传递给前一个 operator 的 output，这样前一个 operator 的输出就可以直接调用当前 operator
+		WatermarkGaugeExposingOutput<StreamRecord<IN>> currentOperatorOutput;		//这个方法就是是创建内部节点的output，所以只会有下面两种情况；
+		if (containingTask.getExecutionConfig().isObjectReuseEnabled()) { 										//如果开启了对象重用
+			currentOperatorOutput = new ChainingOutput<>(chainedOperator, this, outputTag);   //就创建ChainingOutput
 		}
 		else {
 			TypeSerializer<IN> inSerializer = operatorConfig.getTypeSerializerIn1(userCodeClassloader);
-			currentOperatorOutput = new CopyingChainingOutput<>(chainedOperator, inSerializer, outputTag, this);
+			currentOperatorOutput = new CopyingChainingOutput<>(chainedOperator, inSerializer, outputTag, this);  //否则就创建CopyingChainingOutput
 		}
 
 		// wrap watermark gauges since registered metrics must be unique
