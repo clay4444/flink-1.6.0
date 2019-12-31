@@ -69,7 +69,7 @@ public abstract class AbstractUdfStreamOperator<OUT, F extends Function>
 	/** Flag to prevent duplicate function.close() calls in close() and dispose(). */
 	private transient boolean functionsClosed = false;
 
-	public AbstractUdfStreamOperator(F userFunction) {
+	public AbstractUdfStreamOperator(F userFunction) {   //userFunction 啥时候赋值的？   底层子类传上来的，  奥，知道了，是在构建StreamGraph的时候，生成的， 执行的时候是序列化传过来的；
 		this.userFunction = requireNonNull(userFunction);
 		checkUdfCheckpointingPreconditions();
 	}

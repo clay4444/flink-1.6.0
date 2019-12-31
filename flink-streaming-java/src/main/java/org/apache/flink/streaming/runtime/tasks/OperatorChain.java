@@ -94,7 +94,7 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 
 	private final StreamOperator<?>[] allOperators;
 
-	private final RecordWriterOutput<?>[] streamOutputs;
+	private final RecordWriterOutput<?>[] streamOutputs;  //chain链最终的输出outout(不包含内部的)
 
 	private final WatermarkGaugeExposingOutput<StreamRecord<OUT>> chainEntryPoint;  //chain 链头节点的 output
 
@@ -299,6 +299,7 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 	//  initialization utilities
 	// ------------------------------------------------------------------------
 
+	//这个方法会被递归调用
 	//创建 output collector
 	private <T> WatermarkGaugeExposingOutput<StreamRecord<T>> createOutputCollector(
 			StreamTask<?, ?> containingTask,  			//对应的StreamTask
@@ -324,12 +325,12 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 			int outputId = outputEdge.getTargetId();   //targetId，所以取得是这条边的下游节点；
 			StreamConfig chainedOpConfig = chainedConfigs.get(outputId);  //下游节点的StreamConfig
 
-			//创建当前节点的下游节点，并返回当前节点的 output
+			// >>>>>>>>>>>>>>>>>>>>>>>>>>>>> 创建当前节点的下游节点，并返回当前节点的 output
 			//createChainedOperator 在创建 operator 的时候，会调用 createOutputCollector 为 operator 创建 output
 			//所以会形成递归调用关系，所有的 operator 以及它们的 output 都会被创建出来
 			WatermarkGaugeExposingOutput<StreamRecord<T>> output = createChainedOperator(
 				containingTask,
-				chainedOpConfig,
+				chainedOpConfig,  //这里，体现了递归，每次都是下一个
 				chainedConfigs,
 				userCodeClassloader,
 				streamOutputs,
@@ -388,7 +389,7 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 	/**
 	 * 创建chain链内部某个operator的output
 	 *
-	 * 这里的主要逻辑其实就是递归地创建 OpeartorChain 内部所有的 StreamOperator，并为每一个 StreamOperator 创建 Output collecto，结合本文上面对 Output 的介绍应该就很容易理解了。
+	 * 这里的主要逻辑其实就是递归地创建 OperatorChain 内部所有的 StreamOperator，并为每一个 StreamOperator 创建 Output collector，结合本文上面对 Output 的介绍应该就很容易理解了。
 	 */
 	private <IN, OUT> WatermarkGaugeExposingOutput<StreamRecord<IN>> createChainedOperator(
 			StreamTask<?, ?> containingTask,
@@ -412,11 +413,14 @@ public class OperatorChain<OUT, OP extends StreamOperator<OUT>> implements Strea
 		//从 StreamConfig 中取出当前 Operator
 		OneInputStreamOperator<IN, OUT> chainedOperator = operatorConfig.getStreamOperator(userCodeClassloader);
 
+		//为这个operator的 Output & StreamConfig 赋值，
 		chainedOperator.setup(containingTask, operatorConfig, chainedOperatorOutput);
 
 		allOperators.add(chainedOperator);
 
-		//这里是在为当前 operator 前向的 operator 创建 output
+		//==================================================================================================================
+
+		// >>>>>>>>>>>>>>>>>>>>>>>>>>> 这里是在为当前 operator 前向的 operator 创建 output
 		//所以当前 operator 被传递给前一个 operator 的 output，这样前一个 operator 的输出就可以直接调用当前 operator
 		WatermarkGaugeExposingOutput<StreamRecord<IN>> currentOperatorOutput;		//这个方法就是是创建内部节点的output，所以只会有下面两种情况；
 		if (containingTask.getExecutionConfig().isObjectReuseEnabled()) { 										//如果开启了对象重用

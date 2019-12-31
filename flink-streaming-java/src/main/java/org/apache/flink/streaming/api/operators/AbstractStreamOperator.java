@@ -104,9 +104,9 @@ public abstract class AbstractStreamOperator<OUT>
 	// ---------------- runtime fields ------------------
 
 	/** The task that contains this operator (and other operators in the same chain). */
-	private transient StreamTask<?, ?> container;
+	private transient StreamTask<?, ?> container;   // 任务执行的时候的具体的Task类型， 执行的时候调用的就是他的invoke方法
 
-	protected transient StreamConfig config;
+	protected transient StreamConfig config;   //  具体的config
 
 	/**
 	 * 用来处理当前算子处理完的记录
@@ -165,9 +165,10 @@ public abstract class AbstractStreamOperator<OUT>
 	private long input2Watermark = Long.MIN_VALUE;
 
 	// ------------------------------------------------------------------------
-	//  Life Cycle
+	//  Life Cycle     生命周期
 	// ------------------------------------------------------------------------
 
+	//为operator的output 等赋值
 	@Override
 	public void setup(StreamTask<?, ?> containingTask, StreamConfig config, Output<StreamRecord<OUT>> output) {
 		final Environment environment = containingTask.getEnvironment();

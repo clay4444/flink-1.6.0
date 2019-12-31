@@ -87,7 +87,7 @@ public class StreamSource<OUT, SRC extends SourceFunction<OUT>>
 
 		try {
 			//在StreamSource生成上下文之后，接下来就是把上下文交给SourceFunction去执行:
-			userFunction.run(ctx);
+			userFunction.run(ctx); //真正执行用户代码；
 
 			// if we get here, then the user function either exited after being done (finite source)
 			// or the function was canceled or stopped. For the finite source case, we should emit
