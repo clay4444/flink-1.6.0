@@ -36,6 +36,9 @@ import java.util.Map;
  *
  * @param <K> The key type of the elements in the {@link BroadcastState Broadcast State}.
  * @param <V> The value type of the elements in the {@link BroadcastState Broadcast State}.
+ *
+ * Operator state 中 BroadcastState 的具体实现
+ * 内部其实就是一个HashMap
  */
 public class HeapBroadcastState<K, V> implements BackendWritableBroadcastState<K, V> {
 
@@ -47,7 +50,7 @@ public class HeapBroadcastState<K, V> implements BackendWritableBroadcastState<K
 	/**
 	 * The internal map the holds the elements of the state.
 	 */
-	private final Map<K, V> backingMap;
+	private final Map<K, V> backingMap; //<<<<< 核心：就是一个HashMap
 
 	/**
 	 * A serializer that allows to perform deep copies of internal map state.

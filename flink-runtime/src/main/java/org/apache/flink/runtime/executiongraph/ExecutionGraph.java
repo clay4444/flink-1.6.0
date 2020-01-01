@@ -203,7 +203,7 @@ public class ExecutionGraph implements AccessExecutionGraph {
 
 	/** Listeners that receive messages when the entire job switches it status
 	 * (such as from RUNNING to FINISHED). */
-	private final List<JobStatusListener> jobStatusListeners;
+	private final List<JobStatusListener> jobStatusListeners;  //监听作业状态的监听器，
 
 	/** Listeners that receive messages whenever a single task execution changes its status. */
 	private final List<ExecutionStatusListener> executionListeners;
@@ -462,6 +462,12 @@ public class ExecutionGraph implements AccessExecutionGraph {
 		return false;
 	}
 
+	/**
+	 * 对已经创建的ExecutionGraph配置checkpoint
+	 *
+	 * 主要是创建 CheckpointCoordinator，这个是 checkpoint 的协调者，checkpoint就是它发起的
+	 * 然后往 jobStatusListeners 添加了一个作业状态的监听器，当作业的状态变为running时，会直接启动 checkpointCoordinator；
+	 */
 	public void enableCheckpointing(
 			long interval,
 			long checkpointTimeout,
@@ -491,6 +497,7 @@ public class ExecutionGraph implements AccessExecutionGraph {
 		checkpointStatsTracker = checkNotNull(statsTracker, "CheckpointStatsTracker");
 
 		// create the coordinator that triggers and commits checkpoints and holds the state
+		// >>>>>>> 重要，创建checkpointCoordinator，它是checkpoint的协调者(发起者)
 		checkpointCoordinator = new CheckpointCoordinator(
 			jobInformation.getJobId(),
 			interval,
@@ -521,6 +528,8 @@ public class ExecutionGraph implements AccessExecutionGraph {
 		if (interval != Long.MAX_VALUE) {
 			// the periodic checkpoint scheduler is activated and deactivated as a result of
 			// job status changes (running -> on, all other states -> off)
+
+			//注册一个作业状态的监听 CheckpointCoordinatorDeActivator, CheckpointCoordinatorDeActivator 会在作业状态发生改变时得到通知。
 			registerJobStatusListener(checkpointCoordinator.createActivatorDeactivator());
 		}
 	}
@@ -1724,6 +1733,9 @@ public class ExecutionGraph implements AccessExecutionGraph {
 	//  Listeners & Observers
 	// --------------------------------------------------------------------------------------------
 
+	/**
+	 * 添加一个监听作业状态的监听器
+	 */
 	public void registerJobStatusListener(JobStatusListener listener) {
 		if (listener != null) {
 			jobStatusListeners.add(listener);

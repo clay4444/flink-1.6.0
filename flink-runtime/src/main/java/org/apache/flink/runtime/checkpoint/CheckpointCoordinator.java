@@ -107,13 +107,13 @@ public class CheckpointCoordinator {
 	private final Executor executor;
 
 	/** Tasks who need to be sent a message when a checkpoint is started */
-	private final ExecutionVertex[] tasksToTrigger;
+	private final ExecutionVertex[] tasksToTrigger;   //对应JobGraph中的triggerVertices，只包含那些作为source的节点
 
 	/** Tasks who need to acknowledge a checkpoint before it succeeds */
-	private final ExecutionVertex[] tasksToWaitFor;
+	private final ExecutionVertex[] tasksToWaitFor;   //对应JobGraph中的ackVertices，包含所有节点
 
 	/** Tasks who need to be sent a message when a checkpoint is confirmed */
-	private final ExecutionVertex[] tasksToCommitTo;
+	private final ExecutionVertex[] tasksToCommitTo;   //对应JobGraph中的commitVertices，包含所有节点
 
 	/** Map from checkpoint ID to the pending checkpoint */
 	private final Map<Long, PendingCheckpoint> pendingCheckpoints;
@@ -124,7 +124,7 @@ public class CheckpointCoordinator {
 
 	/** The root checkpoint state backend, which is responsible for initializing the
 	 * checkpoint, storing the metadata, and cleaning up the checkpoint */
-	private final CheckpointStorage checkpointStorage;
+	private final CheckpointStorage checkpointStorage;  //从具体的StateBackend中创建的，（CheckpointStorage 目前有两个具体实现，分别为 FsCheckpointStorage 和 MemoryBackendCheckpointStorage），CheckpointStorage 则是从 StateBackend 中创建；
 
 	/** A list of recent checkpoint IDs, to identify late messages (vs invalid ones) */
 	private final ArrayDeque<Long> recentPendingCheckpoints;
@@ -395,11 +395,24 @@ public class CheckpointCoordinator {
 	 * periodic. If this flag is true, but the periodic scheduler is disabled,
 	 * the checkpoint will be declined.
 	 * @return <code>true</code> if triggering the checkpoint succeeded.
+	 *
+	 * checkpoint定时调度的就是这个方法；
 	 */
 	public boolean triggerCheckpoint(long timestamp, boolean isPeriodic) {
 		return triggerCheckpoint(timestamp, checkpointProperties, null, isPeriodic).isSuccess();
 	}
 
+	/**
+	 * checkpoint定时调度的就是这个方法；
+	 * 概括地说，包括以下几个步骤：
+	 * 1.检查是否可以触发 checkpoint，包括是否需要强制进行 checkpoint，当前正在排队的并发 checkpoint 的数目是否超过阈值，距离上一次成功 checkpoint 的间隔时间是否过小等，如果这些条件不满足，则当前检查点的触发请求不会执行
+	 * 2.检查是否所有需要触发 checkpoint 的 Execution 都是 RUNNING 状态
+	 * 3.生成此次 checkpoint 的 checkpointID（id 是严格自增的），并初始化 CheckpointStorageLocation，CheckpointStorageLocation 是此次 checkpoint 存储位置的抽象，通过 CheckpointStorage.initializeLocationForCheckpoint() 创建
+	 * （CheckpointStorage 目前有两个具体实现，分别为 FsCheckpointStorage 和 MemoryBackendCheckpointStorage），CheckpointStorage 则是从 StateBackend 中创建；
+	 * 4.生成 PendingCheckpoint，这表示一个处于中间状态的 checkpoint，并保存在 checkpointId -> PendingCheckpoint 这样的映射关系中
+	 * 5.注册一个调度任务，在 checkpoint 超时后取消此次 checkpoint，并重新触发一次新的 checkpoint
+	 * 6.调用 Execution.triggerCheckpoint() 方法向所有需要 trigger 的 task 发起 checkpoint 请求
+	 */
 	@VisibleForTesting
 	public CheckpointTriggerResult triggerCheckpoint(
 			long timestamp,
@@ -407,6 +420,7 @@ public class CheckpointCoordinator {
 			@Nullable String externalSavepointLocation,
 			boolean isPeriodic) {
 
+		//1.检查是否可以触发 checkpoint，包括是否需要强制进行 checkpoint，当前正在排队的并发 checkpoint 的数目是否超过阈值，距离上一次成功 checkpoint 的间隔时间是否过小等，如果这些条件不满足，则当前检查点的触发请求不会执行
 		// make some eager pre-checks
 		// 首先做一些校验
 		synchronized (lock) {
@@ -462,10 +476,12 @@ public class CheckpointCoordinator {
 			}
 		}
 
+		//2.检查是否所有需要触发 checkpoint 的 Execution 都是 RUNNING 状态
+
 		// check if all tasks that we need to trigger are running.
 		// if not, abort the checkpoint
 		// 检查所有的task 是否在正常运行，如果不是正常运行，则终止此 checkpoint；
-		Execution[] executions = new Execution[tasksToTrigger.length];
+		Execution[] executions = new Execution[tasksToTrigger.length];  // >>>>>> 注意： tasksToTrigger 只包含所有作为source的节点，
 		for (int i = 0; i < tasksToTrigger.length; i++) {
 			Execution ee = tasksToTrigger[i].getCurrentExecutionAttempt();
 			if (ee == null) {
@@ -502,6 +518,9 @@ public class CheckpointCoordinator {
 			}
 		}
 
+		//3.生成此次 checkpoint 的 checkpointID（id 是严格自增的），并初始化 CheckpointStorageLocation，CheckpointStorageLocation 是此次 checkpoint 存储位置的抽象，通过 CheckpointStorage.initializeLocationForCheckpoint() 创建
+		//	 * （CheckpointStorage 目前有两个具体实现，分别为 FsCheckpointStorage 和 MemoryBackendCheckpointStorage），CheckpointStorage 则是从 StateBackend 中创建；
+
 		// we will actually trigger this checkpoint!
 		// 检查完毕，可以触发检查点了
 
@@ -511,7 +530,7 @@ public class CheckpointCoordinator {
 		// we avoid blocking the processing of 'acknowledge/decline' messages during that time.
 		synchronized (triggerLock) {
 
-			final CheckpointStorageLocation checkpointStorageLocation;
+			final CheckpointStorageLocation checkpointStorageLocation;  //CheckpointStorageLocation 是此次 checkpoint 存储位置的抽象
 			final long checkpointID;
 
 			try {
@@ -522,7 +541,7 @@ public class CheckpointCoordinator {
 
 				checkpointStorageLocation = props.isSavepoint() ?
 						checkpointStorage.initializeLocationForSavepoint(checkpointID, externalSavepointLocation) :
-						checkpointStorage.initializeLocationForCheckpoint(checkpointID);
+						checkpointStorage.initializeLocationForCheckpoint(checkpointID);  //通过 CheckpointStorage.initializeLocationForCheckpoint() 创建
 			}
 			catch (Throwable t) {
 				int numUnsuccessful = numUnsuccessfulCheckpointsTriggers.incrementAndGet();
@@ -533,6 +552,8 @@ public class CheckpointCoordinator {
 				return new CheckpointTriggerResult(CheckpointDeclineReason.EXCEPTION);
 			}
 
+			//4.生成 PendingCheckpoint，这表示一个处于中间状态的 checkpoint，并保存在 checkpointId -> PendingCheckpoint 这样的映射关系中
+
 			// PendingCheckpoint是一个启动了的checkpoint，但是还没有被确认。等到所有的task都确认了本次checkpoint，那么这个checkpoint对象将转化为一个 CompletedCheckpoint 。
 			final PendingCheckpoint checkpoint = new PendingCheckpoint(
 				job,
@@ -542,6 +563,8 @@ public class CheckpointCoordinator {
 				props,
 				checkpointStorageLocation,
 				executor);
+
+			//5.注册一个调度任务，在 checkpoint 超时后取消此次 checkpoint，并重新触发一次新的 checkpoint
 
 			if (statsTracker != null) {
 				// 定义一个超时callback，如果checkpoint执行了很久还没完成，就把它取消
@@ -639,7 +662,11 @@ public class CheckpointCoordinator {
 						checkpointStorageLocation.getLocationReference());
 
 				// send the messages to the tasks that trigger their checkpoint
+
+				//6.调用 Execution.triggerCheckpoint() 方法向所有需要 trigger 的 task 发起 checkpoint 请求
+
 				//#############   核心逻辑  ###############
+				// >>>>>> 注意： executions 只包含所有作为source的节点，只有作为source的节点会触发 checkpoint
 				for (Execution execution: executions) {
 					// 这里是调用了Execution的triggerCheckpoint方法，一个execution就是一个 executionVertex 的实际执行者。我们看一下这个方法：
 					execution.triggerCheckpoint(checkpointID, timestamp, checkpointOptions);
@@ -1197,7 +1224,10 @@ public class CheckpointCoordinator {
 	//  Periodic scheduling of checkpoints  定期触发checkpoint的操作
 	// --------------------------------------------------------------------------------------------
 
-	// flink在提交job时，会启动这个类的 startCheckpointScheduler 方法，如下所示
+	/**
+	 * 当作业的状态变为running时，创建的监听器会直接调用这个方法，开始启动checkpoint
+	 * 问题： 那作业状态什么时候变为running的呢？
+	 */
 	public void startCheckpointScheduler() {
 		synchronized (lock) {
 			if (shutdown) {
@@ -1205,12 +1235,12 @@ public class CheckpointCoordinator {
 			}
 
 			// make sure all prior timers are cancelled
-			stopCheckpointScheduler();
+			stopCheckpointScheduler();  //先清理状态
 
 			periodicScheduling = true;
 			long initialDelay = ThreadLocalRandom.current().nextLong(
 				minPauseBetweenCheckpointsNanos / 1_000_000L, baseInterval + 1L);
-			currentPeriodicTrigger = timer.scheduleAtFixedRate(
+			currentPeriodicTrigger = timer.scheduleAtFixedRate(   //启动的逻辑就是以固定的时间间隔，来运行ScheduledTrigger这个Runnable
 					new ScheduledTrigger(), initialDelay, baseInterval, TimeUnit.MILLISECONDS);
 		}
 	}
@@ -1238,6 +1268,9 @@ public class CheckpointCoordinator {
 	//  job status listener that schedules / cancels periodic checkpoints
 	// ------------------------------------------------------------------------
 
+	/**
+	 * 创建一个监听作业状态的监听器，当作业状态变为Running时，会直接调用 startCheckpointScheduler 方法
+	 */
 	public JobStatusListener createActivatorDeactivator() {
 		synchronized (lock) {
 			if (shutdown) {
@@ -1254,6 +1287,9 @@ public class CheckpointCoordinator {
 
 	// ------------------------------------------------------------------------
 
+	/**
+	 * checkpoint 协调者启动时(startCheckpointScheduler方法)定时调度的就是这个任务
+	 */
 	private final class ScheduledTrigger implements Runnable {
 
 		@Override

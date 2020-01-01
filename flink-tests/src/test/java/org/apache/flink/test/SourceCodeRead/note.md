@@ -190,11 +190,44 @@ Flink 可以处理任意的 Java 或 Scala 对象，而不必实现特定的接�
 三层封装：StreamTransformation -> operator -> userFunction，最终执行具体的StreamTask，把反序列化出来的operator传进StreamTask中，最终还是执行operator中的userFunction
 
 
+###  state的管理
+
+##### Keyed State 和Operator State：
+Flink中的状态分为两类，Keyed State和Operator State。Keyed State是和具体的Key相绑定的，只能在KeyedStream上的函数和算子中使用。 
+Opeartor State 则是和 Operator 的一个特定的并行实例相绑定的，例如 Kafka Connector 中，每一个并行的Kafka Consumer都在 Operator State 中维护当前 Consumer 订阅的 partiton 和 offset。
+由于 Flink 中的 keyBy 操作保证了每一个键相关联的所有消息都会送给下游算子的同一个并行实例处理，因此 Keyed State 也可以看作是 Operator State 的一种分区(partitioned)形式，每一个 key 都关联一个状态分区(state-partition)。
+
+##### Managed State 和 Raw State：
+从另一个角度来看，无论Operator State还是Keyed State，都有两种形式，Managed State和Raw State。Managed State的数据结构由Flink进行托管，而Raw State的数据结构对Flink是透明的。 
+Flink的建议是尽量使用Managed State, 这样Flink可以在并行度改变等情况下重新分布状态，并且可以更好地进行内存管理。
+
+##### 使用方法：
+1. CheckpointedFunction 接口，既可以管理Operator State，也可以管理Keyed State，主要有两个方法，snapshotState()在创建检查点的时候调用，initializeState()在初始化/状态恢复时被调用；
+2. RuntimeContext，对于Keyed State，通常都是通过RuntimeContext实例来获取
+3. ListCheckpointed 接口，只能管理operator state 中的 list-state；
+
+##### StateBackend：
+StateBackend 定义了状态是如何存储的，不同的 State Backend 会采用不同的方式来存储状态，目前 Flink 提供了三种不同形式的存储后端，分别是
+1. MemoryStateBackend：将工作状态存储在TaskManager的内存中，将检查点存储在JobManager的内存中；
+2. FsStateBackend：将工作状态存储在TaskManager的内存中，将检查点存储在文件系统中（通常是分布式文件系统）
+3. RocksDBStateBackend：状态存储在RocksDB中，将检查点存储在文件系统中（类似FsStateBackend）；这里不太准确，对于operator state来说，即使是使用这种backend，状态也是存储在tm内存中的；
+
+StateBackend还负责创建OperatorStateBackend和AbstractKeyedStateBackend,分别负责存储Operator State和Keyed State，以及在需要的时候生成对应的Checkpoint。
+所以，**实际上StateBackend可以看作是一个Factory，由它创建的具体的 OperatorStateBackend 和 AbstractKeyedStateBackend 才负责实际的状态存储和检查点生成的工作**
+
+StateBackend 的另一个主要作用是和检查点相关，负责为作业创建检查点的存储（检查点写入）以及根据一个检查点的 pointer 获得检查点的存储位置(检查点读取)。
+
+##### 状态的注册与获取
+前面介绍如何使用状态的时候提到，通过CheckpointedFunction接口既可以获取Operator State，也可以获取Keyed State，这两类状态分别通过OperatorStateStore和KeyedStateStore这两个接口作为桥梁来进行管理。
+比较详细的类图和底层实现画在纸上了，到时候再看吧；
+
+##### 注意点
+对于operator state来说，无论使用哪种backend，工作状态都是存储在tm内存中的；
+对于keyed state来说，MemoryStateBackend和FsStateBackend也是将状态存储在tm内存中，RocksDBStateBackend会将状态存储在rocksdb中；
 
 
 
-
-
+### checkpoint
 
     
 

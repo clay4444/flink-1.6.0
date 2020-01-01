@@ -45,6 +45,8 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  * to streams using {@link #snapshot(long, long, CheckpointStreamFactory, CheckpointOptions)}.
  *
  * @param <K> Type of the key by which state is keyed.
+ *
+ * 为 KeyedStateBackend 提供了基础实现
  */
 public abstract class AbstractKeyedStateBackend<K> implements
 	KeyedStateBackend<K>,
@@ -220,6 +222,8 @@ public abstract class AbstractKeyedStateBackend<K> implements
 
 	/**
 	 * @see KeyedStateBackend
+	 *
+	 * 获取 / 创建 keyed state
 	 */
 	@Override
 	@SuppressWarnings("unchecked")
@@ -261,6 +265,8 @@ public abstract class AbstractKeyedStateBackend<K> implements
 	 *       state backend, or being set on the state directly.
 	 *
 	 * @see KeyedStateBackend
+	 *
+	 * namespace的概念：用途是为了保存窗口中的状态
 	 */
 	@SuppressWarnings("unchecked")
 	@Override

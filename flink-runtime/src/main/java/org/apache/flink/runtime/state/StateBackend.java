@@ -78,6 +78,8 @@ import java.io.IOException;
  * 
  * State backend implementations have to be thread-safe. Multiple threads may be creating
  * streams and keyed-/operator state backends concurrently.
+ *
+ * 实际上 StateBackend 可以看作是一个 Factory，由它创建的具体的 OperatorStateBackend 和 AbstractKeyedStateBackend 才负责实际的状态存储和检查点生成的工作。
  */
 @PublicEvolving
 public interface StateBackend extends java.io.Serializable {
@@ -98,6 +100,8 @@ public interface StateBackend extends java.io.Serializable {
 	 *
 	 * @throws IOException Thrown, if the state backend does not understand the pointer, or if
 	 *                     the pointer could not be resolved due to an I/O error.
+	 *
+	 *  解析检查点的存储位置
 	 */
 	CompletedCheckpointStorageLocation resolveCheckpoint(String externalPointer) throws IOException;
 
@@ -109,6 +113,8 @@ public interface StateBackend extends java.io.Serializable {
 	 * @return A checkpoint storage for the given job.
 	 *
 	 * @throws IOException Thrown if the checkpoint storage cannot be initialized.
+	 *
+	 *  创建检查点存储
 	 */
 	CheckpointStorage createCheckpointStorage(JobID jobId) throws IOException;
 
@@ -127,6 +133,8 @@ public interface StateBackend extends java.io.Serializable {
 	 * @return The Keyed State Backend for the given job, operator, and key group range.
 	 *
 	 * @throws Exception This method may forward all exceptions that occur while instantiating the backend.
+	 *
+	 *  创建AbstractKeyedStateBackend，负责 keyed state 的存储和检查点
 	 */
 	default <K> AbstractKeyedStateBackend<K> createKeyedStateBackend(
 			Environment env,
@@ -181,6 +189,8 @@ public interface StateBackend extends java.io.Serializable {
 	 * @return The OperatorStateBackend for operator identified by the job and operator identifier.
 	 *
 	 * @throws Exception This method may forward all exceptions that occur while instantiating the backend.
+	 *
+	 *  OperatorStateBackend，负责 operator state 的存储和检查点
 	 */
 	OperatorStateBackend createOperatorStateBackend(Environment env, String operatorIdentifier) throws Exception;
 }

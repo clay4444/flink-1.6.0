@@ -706,6 +706,13 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 	// Checkpointing RPCs
 	// ----------------------------------------------------------------------
 
+	/**
+	 * 供 CheckpointCoordinator(checkpoint协调者) 在触发checkpoint时调用，
+	 *
+	 * CheckpointCoordinator 发出触发 checkpoint 的消息，最终通过 RPC 调用 TaskExecutorGateway.triggerCheckpoint，即请求执行 TaskExecutor.triggerCheckpoin()。
+	 * 因为一个 TaskExecutor 中可能有多个 Task 正在运行，因而要根据触发 checkpoint 的 ExecutionAttemptID 找到对应的 Task，然后调用 Task.triggerCheckpointBarrier() 方法。
+	 *  >>>>>>>>>>>>>> 注意： 只有作为 source 的 Task 才会触发 triggerCheckpointBarrier() 方法的调用。
+	 */
 	@Override
 	public CompletableFuture<Acknowledge> triggerCheckpoint(
 			ExecutionAttemptID executionAttemptID,
@@ -714,10 +721,10 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 			CheckpointOptions checkpointOptions) {
 		log.debug("Trigger checkpoint {}@{} for {}.", checkpointId, checkpointTimestamp, executionAttemptID);
 
-		final Task task = taskSlotTable.getTask(executionAttemptID);
+		final Task task = taskSlotTable.getTask(executionAttemptID);  //根据 executionAttemptID 找到对应的Task
 
 		if (task != null) {
-			task.triggerCheckpointBarrier(checkpointId, checkpointTimestamp, checkpointOptions);
+			task.triggerCheckpointBarrier(checkpointId, checkpointTimestamp, checkpointOptions); //对Task调用 triggerCheckpointBarrier() 方法；
 
 			return CompletableFuture.completedFuture(Acknowledge.get());
 		} else {

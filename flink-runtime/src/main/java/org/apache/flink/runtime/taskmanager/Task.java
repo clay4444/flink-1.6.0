@@ -249,7 +249,7 @@ public class Task implements Runnable, TaskActions, CheckpointListener {
 	/** The invokable of this task, if initialized. All accesses must copy the reference and
 	 * check for null, as this field is cleared as part of the disposal logic. */
 	@Nullable
-	private volatile AbstractInvokable invokable;
+	private volatile AbstractInvokable invokable;  	//这个Task对应的任务类型， 哪种 StreamTask
 
 	/** The current execution state of the task. */
 	private volatile ExecutionState executionState = ExecutionState.CREATED;
@@ -1225,17 +1225,19 @@ public class Task implements Runnable, TaskActions, CheckpointListener {
 	 * @param checkpointID The ID identifying the checkpoint.
 	 * @param checkpointTimestamp The timestamp associated with the checkpoint.
 	 * @param checkpointOptions Options for performing this checkpoint.
+	 *
+	 * 作为Source的Task，调用这个方法，触发checkpoint逻辑，注意是异步进行的；
 	 */
 	public void triggerCheckpointBarrier(
 			final long checkpointID,
 			long checkpointTimestamp,
 			final CheckpointOptions checkpointOptions) {
 
-		final AbstractInvokable invokable = this.invokable;
+		final AbstractInvokable invokable = this.invokable;  //这个Task执行的任务类型， StreamTask的子类；
 		//该类创建了一个 CheckpointMetaData 的对象，：
 		final CheckpointMetaData checkpointMetaData = new CheckpointMetaData(checkpointID, checkpointTimestamp);
 
-		if (executionState == ExecutionState.RUNNING && invokable != null) {
+		if (executionState == ExecutionState.RUNNING && invokable != null) {  //确定任务状态
 
 			// build a local closure
 			final String taskName = taskNameWithSubtask;

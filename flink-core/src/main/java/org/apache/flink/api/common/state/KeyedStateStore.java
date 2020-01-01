@@ -22,6 +22,8 @@ import org.apache.flink.annotation.PublicEvolving;
 
 /**
  * This interface contains methods for registering keyed state with a managed store.
+ *
+ * 和OperatorStateStore类似，底层实现需要关注的也只有 DefaultKeyedStateStore 一个，
  */
 @PublicEvolving
 public interface KeyedStateStore {

@@ -41,7 +41,7 @@ public interface KeyedStateFactory {
 	 * @param <IS> The type of internal state.
 	 */
 	@Nonnull
-	default <N, SV, S extends State, IS extends S> IS createInternalState(
+	default <N, SV, S extends State, IS extends S> IS createInternalState( //核心方法，交给具体的子类去实现
 		@Nonnull TypeSerializer<N> namespaceSerializer,
 		@Nonnull StateDescriptor<S, SV> stateDesc) throws Exception {
 		return createInternalState(namespaceSerializer, stateDesc, StateSnapshotTransformFactory.noTransform());

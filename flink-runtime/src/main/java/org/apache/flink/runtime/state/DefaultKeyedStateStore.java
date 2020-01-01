@@ -41,10 +41,13 @@ import static java.util.Objects.requireNonNull;
 
 /**
  * Default implementation of KeyedStateStore that currently forwards state registration to a {@link RuntimeContext}.
+ *
+ * KeyedStateStore定义了用于创建和管理托管keyed state的方法，分别对应ValueState,ListState，ReducingState以及AggregatingState以及MapState。相比于operator state,Keyed state的管理要更复杂一些
+ * KeyedStateStore接口的具体实现是 DefaultKeyedStateStore,DefaultKeyedStateStore 拥有 KeyedStateBackend 的引用，所有的状态获取的方法实际上都由 KeyedStateBackend 来完成。
  */
-public class DefaultKeyedStateStore implements KeyedStateStore {
+public class DefaultKeyedStateStore implements KeyedStateStore {  //桥梁  KeyedStateStore 接口
 
-	protected final KeyedStateBackend<?> keyedStateBackend;
+	protected final KeyedStateBackend<?> keyedStateBackend; // <<<<<<< 这里，所有的状态获取都是通过具体的 KeyedStateBackend 来完成的
 	protected final ExecutionConfig executionConfig;
 
 	public DefaultKeyedStateStore(KeyedStateBackend<?> keyedStateBackend, ExecutionConfig executionConfig) {
@@ -52,6 +55,8 @@ public class DefaultKeyedStateStore implements KeyedStateStore {
 		this.executionConfig = Preconditions.checkNotNull(executionConfig);
 	}
 
+
+	//获取 ValueState
 	@Override
 	public <T> ValueState<T> getState(ValueStateDescriptor<T> stateProperties) {
 		requireNonNull(stateProperties, "The state properties must not be null");
@@ -63,6 +68,7 @@ public class DefaultKeyedStateStore implements KeyedStateStore {
 		}
 	}
 
+	//获取ListState
 	@Override
 	public <T> ListState<T> getListState(ListStateDescriptor<T> stateProperties) {
 		requireNonNull(stateProperties, "The state properties must not be null");
@@ -75,6 +81,7 @@ public class DefaultKeyedStateStore implements KeyedStateStore {
 		}
 	}
 
+	//获取ReducingState
 	@Override
 	public <T> ReducingState<T> getReducingState(ReducingStateDescriptor<T> stateProperties) {
 		requireNonNull(stateProperties, "The state properties must not be null");
@@ -120,6 +127,9 @@ public class DefaultKeyedStateStore implements KeyedStateStore {
 		}
 	}
 
+	/**
+	 * >>>>>>>> 最核心的方法，所有的state的获取都是通过这个方法；
+	 */
 	protected  <S extends State> S getPartitionedState(StateDescriptor<S, ?> stateDescriptor) throws Exception {
 		return keyedStateBackend.getPartitionedState(
 				VoidNamespace.INSTANCE,

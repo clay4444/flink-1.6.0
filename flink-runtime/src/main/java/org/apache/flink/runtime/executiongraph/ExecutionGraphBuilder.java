@@ -247,8 +247,9 @@ public class ExecutionGraphBuilder {
 		}
 
 		// configure the state checkpointing
+		// 获取 JobGraph 中配置的 checkpoint 信息；
 		JobCheckpointingSettings snapshotSettings = jobGraph.getCheckpointingSettings();
-		if (snapshotSettings != null) {
+		if (snapshotSettings != null) {  // 说明配置了checkpoint信息；
 			List<ExecutionJobVertex> triggerVertices =
 					idToVertex(snapshotSettings.getVerticesToTrigger(), executionGraph);
 
@@ -353,6 +354,7 @@ public class ExecutionGraphBuilder {
 
 			final CheckpointCoordinatorConfiguration chkConfig = snapshotSettings.getCheckpointCoordinatorConfiguration();
 
+			// >>>>>>>>>>>>>> 这里，核心，在这里之前，  executionGraph 已经生成好了；
 			executionGraph.enableCheckpointing(
 				chkConfig.getCheckpointInterval(),
 				chkConfig.getCheckpointTimeout(),

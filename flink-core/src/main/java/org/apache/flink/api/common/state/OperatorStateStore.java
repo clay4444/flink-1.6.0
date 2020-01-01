@@ -25,6 +25,8 @@ import java.util.Set;
 
 /**
  * This interface contains methods for registering operator state with a managed store.
+ *
+ * OperatorStateStore定义了用于创建和管理托管状态的方法，分别对应 ListState，union ListState 以及 BroadcastState。其中ListState和Union ListState的底层存储是一致的，只是在状态恢复的时候状态的分配模式不一致。
  */
 @PublicEvolving
 public interface OperatorStateStore {

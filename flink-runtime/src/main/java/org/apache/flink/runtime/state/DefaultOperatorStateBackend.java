@@ -60,6 +60,11 @@ import java.util.concurrent.RunnableFuture;
 
 /**
  * Default implementation of OperatorStateStore that provides the ability to make snapshots.
+ *
+ * OperatorStateStore定义了用于创建和管理托管状态的方法，分别对应 ListState，union ListState 以及 BroadcastState。其中ListState和Union ListState的底层存储是一致的，只是在状态恢复的时候状态的分配模式不一致。
+ * OperatorStateBackend 接口继承了 OperatorStateStore 接口，其唯一的具体实现类为 DefaultOperatorStateBackend。
+ *
+ * 在 DefaultOperatorStateBackend 中，使用两个 Map 来存储已经注册的状态名和状态之间的映射关系，分别对应 ListState 和 BroadcastState，
  */
 @Internal
 public class DefaultOperatorStateBackend implements OperatorStateBackend {
@@ -73,11 +78,15 @@ public class DefaultOperatorStateBackend implements OperatorStateBackend {
 
 	/**
 	 * Map for all registered operator states. Maps state name -> state
+	 *
+	 * 第一个map：存储已经注册的 ListState 的状态名和实际状态
 	 */
 	private final Map<String, PartitionableListState<?>> registeredOperatorStates;
 
 	/**
 	 * Map for all registered operator broadcast states. Maps state name -> state
+	 *
+	 * 第二个map：存储已经注册的 BroadcastState 的状态名和实际状态
 	 */
 	private final Map<String, BackendWritableBroadcastState<?, ?>> registeredBroadcastStates;
 
@@ -268,6 +277,9 @@ public class DefaultOperatorStateBackend implements OperatorStateBackend {
 		return broadcastState;
 	}
 
+	/**
+	 * ListState 的获取：
+	 */
 	@Override
 	public <S> ListState<S> getListState(ListStateDescriptor<S> stateDescriptor) throws Exception {
 		return getListState(stateDescriptor, OperatorStateHandle.Mode.SPLIT_DISTRIBUTE);
@@ -607,6 +619,9 @@ public class DefaultOperatorStateBackend implements OperatorStateBackend {
 	 * Implementation of operator list state.
 	 *
 	 * @param <S> the type of an operator state partition.
+	 *
+	 * ListState的具体实现
+	 * 内部其实就是一个    ArrayList： internalList
 	 */
 	static final class PartitionableListState<S> implements ListState<S> {
 
@@ -618,7 +633,7 @@ public class DefaultOperatorStateBackend implements OperatorStateBackend {
 		/**
 		 * The internal list the holds the elements of the state
 		 */
-		private final ArrayList<S> internalList;
+		private final ArrayList<S> internalList;   //<<<<<<<< 核心
 
 		/**
 		 * A serializer that allows to perform deep copies of internalList
@@ -709,10 +724,17 @@ public class DefaultOperatorStateBackend implements OperatorStateBackend {
 		}
 	}
 
+	/**
+	 * list状态的获取，最终调用到这里；
+	 *
+	 * 去除掉缓存相关的代码，这里的逻辑非常清晰，就是对 Map<String, PartitionableListState<?>> 的插入和获取操作，
+	 * PartitionableListState 是 ListState 的具体实现。Union ListState 和普通 ListState 在底层实现上的区别就在于元信息的不同。
+	 */
 	private <S> ListState<S> getListState(
 			ListStateDescriptor<S> stateDescriptor,
 			OperatorStateHandle.Mode mode) throws StateMigrationException {
 
+		//缓存相关：
 		Preconditions.checkNotNull(stateDescriptor);
 		String name = Preconditions.checkNotNull(stateDescriptor.getName());
 
@@ -734,10 +756,12 @@ public class DefaultOperatorStateBackend implements OperatorStateBackend {
 		stateDescriptor.initializeSerializerUnlessSet(getExecutionConfig());
 		TypeSerializer<S> partitionStateSerializer = Preconditions.checkNotNull(stateDescriptor.getElementSerializer());
 
+		//具体的获取状态
 		@SuppressWarnings("unchecked")
 		PartitionableListState<S> partitionableListState = (PartitionableListState<S>) registeredOperatorStates.get(name);
 
 		if (null == partitionableListState) {
+			//状态不存在，创建一个新的状态
 			// no restored state for the state name; simply create new state holder
 
 			partitionableListState = new PartitionableListState<>(
@@ -760,6 +784,7 @@ public class DefaultOperatorStateBackend implements OperatorStateBackend {
 			RegisteredOperatorStateBackendMetaInfo<S> metaInfo =
 				new RegisteredOperatorStateBackendMetaInfo<>(restoredSnapshot);
 
+			// 状态已经存在，检查是否兼容
 			// check compatibility to determine if state migration is required
 			TypeSerializer<S> newPartitionStateSerializer = partitionStateSerializer.duplicate();
 			CompatibilityResult<S> stateCompatibility = CompatibilityUtil.resolveCompatibilityResult(

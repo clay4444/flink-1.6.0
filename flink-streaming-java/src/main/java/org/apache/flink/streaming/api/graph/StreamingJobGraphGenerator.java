@@ -671,6 +671,13 @@ public class StreamingJobGraphGenerator {
 
 	}
 
+	/**
+	 * 配置checkpoint信息 (在jobGraph创建的时候执行：createJobGraph方法)，主要包含三个容器
+	 *
+	 * triggerVertices：只包含那些作为source的节点
+	 * ackVertices：    包含所有的节点
+	 * commitVertices： 包含所有的节点
+	 */
 	private void configureCheckpointing() {
 		CheckpointConfig cfg = streamGraph.getCheckpointConfig();
 
@@ -700,7 +707,7 @@ public class StreamingJobGraphGenerator {
 
 		for (JobVertex vertex : jobVertices.values()) {
 			if (vertex.isInputVertex()) {
-				triggerVertices.add(vertex.getID());
+				triggerVertices.add(vertex.getID());  // <<<< 在这里可以看出ExecutionGraphBuilder
 			}
 			commitVertices.add(vertex.getID());
 			ackVertices.add(vertex.getID());

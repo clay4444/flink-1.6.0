@@ -101,6 +101,8 @@ import java.util.stream.Stream;
  * streams provided by a {@link CheckpointStreamFactory} upon checkpointing.
  *
  * @param <K> The key by which state is keyed.
+ *
+ *           将 State 存放在 TaskManager 的堆内存中。
  */
 public class HeapKeyedStateBackend<K> extends AbstractKeyedStateBackend<K> {
 
