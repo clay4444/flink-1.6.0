@@ -28,6 +28,14 @@ import java.io.IOException;
  * The CheckpointBarrierHandler reacts to checkpoint barrier arriving from the input channels.
  * Different implementations may either simply track barriers, or block certain inputs on
  * barriers.
+ * 数据输入的逻辑在InputGate.java源码解析中；
+ *
+ *  之前我们说一个Task 通过循环调用 InputGate.getNextBufferOrEvent 方法获取输入数据，其实是不太准确的，其实是通过 StreamInputProcessor 创建的CheckpointBarrierHandler 处理的输入数据，
+ *  CheckpointBarrierHandler是对InputGate的又一层封装，也就是 StreamInputProcessor -> CheckpointBarrierHandler -> InputGate -> InputChannel 四层，
+ *
+ *  CheckpointBarrierHandler有两种具体实现
+ *            1.BarrierTracker 对应 AT_LEAST_ONCE    <<  具体看一下它的实现
+ *            2.BarrierBuffer 对应 EXACTLY_ONCE
  */
 @Internal
 public interface CheckpointBarrierHandler {

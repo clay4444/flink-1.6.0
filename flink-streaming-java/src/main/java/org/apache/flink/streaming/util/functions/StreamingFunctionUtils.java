@@ -86,6 +86,7 @@ public final class StreamingFunctionUtils {
 		return false;
 	}
 
+	//调用用户实现的 CheckpointedFunction / ListCheckpointed   等
 	public static void snapshotFunctionState(
 			StateSnapshotContext context,
 			OperatorStateBackend backend,
@@ -96,7 +97,7 @@ public final class StreamingFunctionUtils {
 
 		while (true) {
 
-			if (trySnapshotFunctionState(context, backend, userFunction)) {
+			if (trySnapshotFunctionState(context, backend, userFunction)) {  // <<<<<< 这里
 				break;
 			}
 
@@ -109,27 +110,34 @@ public final class StreamingFunctionUtils {
 		}
 	}
 
+	//调用用户实现的 CheckpointedFunction / ListCheckpointed   等
 	private static boolean trySnapshotFunctionState(
 			StateSnapshotContext context,
 			OperatorStateBackend backend,
 			Function userFunction) throws Exception {
 
+		// 如果用户函数实现了 CheckpointedFunction 接口，调用 snapshotState 创建快照
 		if (userFunction instanceof CheckpointedFunction) {
 			((CheckpointedFunction) userFunction).snapshotState(context);
 
 			return true;
 		}
 
+		// 如果用户函数实现了 ListCheckpointed
 		if (userFunction instanceof ListCheckpointed) {
+			//先调用 snapshotState 方法获取当前状态
 			@SuppressWarnings("unchecked")
 			List<Serializable> partitionableState = ((ListCheckpointed<Serializable>) userFunction).
 					snapshotState(context.getCheckpointId(), context.getCheckpointTimestamp());
 
+			//获取后端存储的状态的引用
 			ListState<Serializable> listState = backend.
 					getSerializableListState(DefaultOperatorStateBackend.DEFAULT_OPERATOR_STATE_NAME);
 
+			//清空当前后端存储的 ListState
 			listState.clear();
 
+			//将当前状态依次加入后端存储
 			if (null != partitionableState) {
 				try {
 					for (Serializable statePartition : partitionableState) {

@@ -356,7 +356,9 @@ public abstract class AbstractStreamOperator<OUT>
 		// this is purely for subclasses to override
 	}
 
-	//snapshotState
+	/**
+	 * snapshotState 方法，对当前算子打一个快照
+	 */
 	@Override
 	public final OperatorSnapshotFutures snapshotState(long checkpointId, long timestamp, CheckpointOptions checkpointOptions,
 			CheckpointStreamFactory factory) throws Exception {
@@ -364,7 +366,7 @@ public abstract class AbstractStreamOperator<OUT>
 		KeyGroupRange keyGroupRange = null != keyedStateBackend ?
 				keyedStateBackend.getKeyGroupRange() : KeyGroupRange.EMPTY_KEY_GROUP_RANGE;
 
-		OperatorSnapshotFutures snapshotInProgress = new OperatorSnapshotFutures();
+		OperatorSnapshotFutures snapshotInProgress = new OperatorSnapshotFutures();  //结果描述
 
 		try (StateSnapshotContextSynchronousImpl snapshotContext = new StateSnapshotContextSynchronousImpl(
 				checkpointId,
@@ -373,22 +375,28 @@ public abstract class AbstractStreamOperator<OUT>
 				keyGroupRange,
 				getContainingTask().getCancelables())) {
 
-			snapshotState(snapshotContext);
+			//对状态进行快照
+			snapshotState(snapshotContext);  // <<<<<< 这里，主要是触发用户自己的checkpoint函数；
 
+			//raw state，要在子类中自己实现 raw state 的快照写入
+			//timer 是作为 raw keyed state 写入的
 			snapshotInProgress.setKeyedStateRawFuture(snapshotContext.getKeyedStateStreamFuture());
 			snapshotInProgress.setOperatorStateRawFuture(snapshotContext.getOperatorStateStreamFuture());
 
-			//那么这个operatorStateBackend是怎么保存状态的呢？
-			// 首先把各个算子的state做了一份深拷贝；
-			// 然后以异步的方式执行了一个内部类的runnable，该内部类的run方法实现了一个模版方 法，首先打开stream，然后写入数据，然后再关闭stream。
-			// 具体细节可查看 DefaultOperatorStateBackend 的 performOperation 方法；
+			//写入 managed state 快照
 			if (null != operatorStateBackend) {
 				snapshotInProgress.setOperatorStateManagedFuture(
-					operatorStateBackend.snapshot(checkpointId, timestamp, factory, checkpointOptions));
+					operatorStateBackend.snapshot(checkpointId, timestamp, factory, checkpointOptions)); //这个snapshot是写checkpoint的吗？ (这里注意区分工作状态和checkpoint)   暂时猜测是的，yes，是的，因为后面没有再进行checkpoint的逻辑了
 			}
 
+			//写入 managed keyed state 快照
 			if (null != keyedStateBackend) {
 				snapshotInProgress.setKeyedStateManagedFuture(
+
+					/**
+					 * keyed state 写入的基本流程与 operator state 相似，但由于 keyed state 在存储时有多种实现，包括基于堆内存和 RocksDB 的不同实现，此外基于 RocksDB 的实现还包括支持增量 checkpoint，
+					 * 因而相比于 operator state 要更复杂一些。另外，Flink 自 1.5.0 版本还引入了一个本地状态存储的优化，支持在 TaskManager 的本地保存一份 keyed state，试图优化状态恢复的速度和网络开销。
+					 */
 					keyedStateBackend.snapshot(checkpointId, timestamp, factory, checkpointOptions));
 			}
 		} catch (Exception snapshotException) {
@@ -409,10 +417,15 @@ public abstract class AbstractStreamOperator<OUT>
 	 * Stream operators with state, which want to participate in a snapshot need to override this hook method.
 	 *
 	 * @param context context that provides information and means required for taking a snapshot
+	 *
+	 *           这个方法是从子类 AbstractUdfStreamOperator 重写的方法中调用上来的；
+	 *           先调用这个方法，再调用用户自己实现的 CheckpointFunction 等方法，这里我们已经看到 checkpoint 操作是如何同用户自定义函数建立关联的了
 	 */
 	public void snapshotState(StateSnapshotContext context) throws Exception {
 		final KeyedStateBackend<?> keyedStateBackend = getKeyedStateBackend();
 		//TODO all of this can be removed once heap-based timers are integrated with RocksDB incremental snapshots
+
+		// 所有的 timer 都作为 raw keyed state 写入
 		if (keyedStateBackend instanceof AbstractKeyedStateBackend &&
 			((AbstractKeyedStateBackend<?>) keyedStateBackend).requiresLegacySynchronousTimerSnapshots()) {
 

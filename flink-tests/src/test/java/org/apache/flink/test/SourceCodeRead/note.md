@@ -229,7 +229,15 @@ StateBackend 的另一个主要作用是和检查点相关，负责为作业创�
 
 ### checkpoint
 
-    
+##### at_least_one 和 exactly_once 的区别
+注意这两个模式都是在所有的inputChannel都收到barrier的时候，才会通知StreamTask触发checkpoint，不同点是at_least_one下不会阻塞用户流数据，而exactly_once在收到所有inputChannel的数据之前，barrier早到的内些channel的数据也不能向下游发送，
+必须先缓存起来，必须等上游所有channel的barrier都到之后，才会通知触发checkpoint；
+还有一点是checkpoint动作都是StreamTask做的，CheckpointBarrierHandler只是通知StreamTask，什么时候可以做；
+
+
+##### 本地状态存储
+所谓本地状态存储，即在存储检查点快照时，在 Task 所在的 TaskManager 本地文件系统中存储一份副本，这样在进行状态恢复时可以优先从本地状态进行恢复，从而减少网络数据传输的开销。本地状态存储仅针对 keyed state;
+
 
 
 

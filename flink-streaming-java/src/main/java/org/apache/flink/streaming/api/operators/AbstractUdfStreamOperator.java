@@ -93,9 +93,11 @@ public abstract class AbstractUdfStreamOperator<OUT, F extends Function>
 
 	}
 
+	//看AbstractStreamOperator父类中的实现
 	@Override
 	public void snapshotState(StateSnapshotContext context) throws Exception {
-		super.snapshotState(context);
+		super.snapshotState(context); 	//调用了父类的方法
+		//通过反射调用用户函数中的快照操作
 		StreamingFunctionUtils.snapshotFunctionState(context, getOperatorStateBackend(), userFunction);
 	}
 

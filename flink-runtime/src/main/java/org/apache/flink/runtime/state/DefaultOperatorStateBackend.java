@@ -319,6 +319,7 @@ public class DefaultOperatorStateBackend implements OperatorStateBackend {
 	//  Snapshot and restore
 	// -------------------------------------------------------------------------------------------
 
+	//对operatorState做快照， 1.6的代码就实现在这里了， 1.9的代码是委托给 DefaultOperatorStateBackendSnapshotStrategy 做的；
 	@Override
 	public RunnableFuture<SnapshotResult<OperatorStateHandle>> snapshot(
 			final long checkpointId,
@@ -337,6 +338,7 @@ public class DefaultOperatorStateBackend implements OperatorStateBackend {
 		final Map<String, BackendWritableBroadcastState<?, ?>> registeredBroadcastStatesDeepCopies =
 				new HashMap<>(registeredBroadcastStates.size());
 
+		//获得已注册的所有 list state 和 broadcast state 的深拷贝
 		ClassLoader snapshotClassLoader = Thread.currentThread().getContextClassLoader();
 		Thread.currentThread().setContextClassLoader(userClassloader);
 		try {
@@ -367,9 +369,11 @@ public class DefaultOperatorStateBackend implements OperatorStateBackend {
 		}
 
 		// implementation of the async IO operation, based on FutureTask
+		//将主要写入操作封装为一个异步的FutureTask
 		final AbstractAsyncCallableWithResources<SnapshotResult<OperatorStateHandle>> ioCallable =
 			new AbstractAsyncCallableWithResources<SnapshotResult<OperatorStateHandle>>() {
 
+				// 创建状态输出流
 				CheckpointStreamFactory.CheckpointStateOutputStream out = null;
 
 				@Override
@@ -406,6 +410,7 @@ public class DefaultOperatorStateBackend implements OperatorStateBackend {
 					CheckpointStreamFactory.CheckpointStateOutputStream localOut = this.out;
 
 					// get the registered operator state infos ...
+					// 收集元数据
 					List<StateMetaInfoSnapshot> operatorMetaInfoSnapshots =
 						new ArrayList<>(registeredOperatorStatesDeepCopies.size());
 
@@ -422,6 +427,7 @@ public class DefaultOperatorStateBackend implements OperatorStateBackend {
 					}
 
 					// ... write them all in the checkpoint stream ...
+					// 写入元数据
 					DataOutputView dov = new DataOutputViewStreamWrapper(localOut);
 
 					OperatorBackendSerializationProxy backendSerializationProxy =
@@ -463,6 +469,7 @@ public class DefaultOperatorStateBackend implements OperatorStateBackend {
 
 					if (closeStreamOnCancelRegistry.unregisterCloseable(out)) {
 
+						//关闭输出流，获得状态句柄，后面可以用这个句柄读取状态
 						StreamStateHandle stateHandle = out.closeAndGetHandle();
 
 						if (stateHandle != null) {
@@ -482,6 +489,7 @@ public class DefaultOperatorStateBackend implements OperatorStateBackend {
 		AsyncStoppableTaskWithCallback<SnapshotResult<OperatorStateHandle>> task =
 			AsyncStoppableTaskWithCallback.from(ioCallable);
 
+		//如果不是异步 checkpoint 那么在这里直接运行 FutureTask，即在同步阶段就完成了状态的写入
 		if (!asynchronousSnapshots) {
 			task.run();
 		}

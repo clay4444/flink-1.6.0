@@ -768,8 +768,17 @@ public class CheckpointCoordinator {
 	 *
 	 * @throws CheckpointException If the checkpoint cannot be added to the completed checkpoint store.
 	 *
-	 * 之前提到，coordinator在触发checkpoint时，生成了一个 PendingCheckpoint ，保存了所 有operator的id。
-	 * 当PendingCheckpoint收到一个operator的完成checkpoint的消息时，它就把这个operator从未完成checkpoint的节点集合移动到已完成的集合。
+	 * 在一个 Task 完成 checkpoint 操作后，CheckpointCoordinator 接收到 Ack 响应，对 Ack 响应的处理流程主要如下：
+	 *
+	 * 1.根据 Ack 的 checkpointID 从 Map<Long, PendingCheckpoint> pendingCheckpoints 中查找对应的 PendingCheckpoint
+	 * 2.若存在对应的 PendingCheckpoint
+	 * 		1.这个 PendingCheckpoint 没有被丢弃，调用 PendingCheckpoint.acknowledgeTask 方法处理 Ack，根据处理结果的不同：
+	 * 			1.SUCCESS：判断是否已经接受了所有需要响应的 Ack，如果是，则调用 completePendingCheckpoint 完成此次 checkpoint
+	 * 			2.DUPLICATE：Ack 消息重复接收，直接忽略
+	 * 			3.UNKNOWN：未知的 Ack 消息，清理上报的 Ack 中携带的状态句柄
+	 * 			4.DISCARD：Checkpoint 已经被 discard，清理上报的 Ack 中携带的状态句柄
+	 * 		2.这个 PendingCheckpoint 已经被丢弃，抛出异常
+	 * 3.若不存在对应的 PendingCheckpoint，则清理上报的 Ack 中携带的状态句柄
 	 */
 	public boolean receiveAcknowledgeMessage(AcknowledgeCheckpoint message) throws CheckpointException {
 		if (shutdown || message == null) {
@@ -1226,7 +1235,7 @@ public class CheckpointCoordinator {
 
 	/**
 	 * 当作业的状态变为running时，创建的监听器会直接调用这个方法，开始启动checkpoint
-	 * 问题： 那作业状态什么时候变为running的呢？
+	 * 问题： 那作业状态什么时候变为running的呢？  看ExecutionGraph的scheduleForExecution()方法，首先设置的就是任务的状态，设置状态的时候就会回调所有的listener
 	 */
 	public void startCheckpointScheduler() {
 		synchronized (lock) {

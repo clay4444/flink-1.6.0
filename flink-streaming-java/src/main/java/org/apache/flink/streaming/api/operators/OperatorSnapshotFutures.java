@@ -31,6 +31,8 @@ import java.util.concurrent.RunnableFuture;
 
 /**
  * Result of {@link StreamOperator#snapshotState}.
+ *
+ * 每一个算子的快照被抽象为 OperatorSnapshotFutures，包含了 operator state 和 keyed state 的快照结果；
  */
 public class OperatorSnapshotFutures {
 

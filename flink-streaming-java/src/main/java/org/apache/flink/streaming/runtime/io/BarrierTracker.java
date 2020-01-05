@@ -45,6 +45,9 @@ import java.util.Optional;
  * guarantees. It can, however, be used to gain "at least once" processing guarantees.
  *
  * <p>NOTE: This implementation strictly assumes that newer checkpoints have higher checkpoint IDs.
+ *
+ * 处理输入数据，对应 AT_LEAST_ONCE 模式
+ * 它仅仅追踪从每一个 input channel 接收到的 barrier，当所有 input channel 的 barrier 都被接收时，就可以触发 checkpoint 了：
  */
 @Internal
 public class BarrierTracker implements CheckpointBarrierHandler {
@@ -60,7 +63,7 @@ public class BarrierTracker implements CheckpointBarrierHandler {
 	// ------------------------------------------------------------------------
 
 	/** The input gate, to draw the buffers and events from. */
-	private final InputGate inputGate;
+	private final InputGate inputGate;  // 看这里，所以最底层还是通过InputChannel消费数据
 
 	/**
 	 * The number of channels. Once that many barriers have been received for a checkpoint, the
@@ -75,7 +78,7 @@ public class BarrierTracker implements CheckpointBarrierHandler {
 	private final ArrayDeque<CheckpointBarrierCount> pendingCheckpoints;
 
 	/** The listener to be notified on complete checkpoints. */
-	private AbstractInvokable toNotifyOnCheckpoint;
+	private AbstractInvokable toNotifyOnCheckpoint;  //StreamTask 这里代表一个监听器，当收到全部的barrier时，
 
 	/** The highest checkpoint ID encountered so far. */
 	private long latestPendingCheckpointID = -1;
@@ -88,23 +91,25 @@ public class BarrierTracker implements CheckpointBarrierHandler {
 		this.pendingCheckpoints = new ArrayDeque<>();
 	}
 
+	//最上层的StreamInputProcessor就是通过这个方法来获取Task的输入数据；
 	@Override
 	public BufferOrEvent getNextNonBlocked() throws Exception {
 		while (true) {
-			Optional<BufferOrEvent> next = inputGate.getNextBufferOrEvent();
+			Optional<BufferOrEvent> next = inputGate.getNextBufferOrEvent();  //先从 InputChannel 消费具体数据
 			if (!next.isPresent()) {
 				// buffer or input exhausted
 				return null;
 			}
 
 			BufferOrEvent bufferOrEvent = next.get();
-			if (bufferOrEvent.isBuffer()) {
+			if (bufferOrEvent.isBuffer()) {  //如果是用户数据，直接返回
 				return bufferOrEvent;
 			}
-			else if (bufferOrEvent.getEvent().getClass() == CheckpointBarrier.class) {
-				processBarrier((CheckpointBarrier) bufferOrEvent.getEvent(), bufferOrEvent.getChannelIndex());
+			else if (bufferOrEvent.getEvent().getClass() == CheckpointBarrier.class) {  //是 barrier 数据；
+				processBarrier((CheckpointBarrier) bufferOrEvent.getEvent(), bufferOrEvent.getChannelIndex()); //这里，处理barrier
 			}
 			else if (bufferOrEvent.getEvent().getClass() == CancelCheckpointMarker.class) {
+				// 接收到 CancelCheckpointMarker
 				processCheckpointAbortBarrier((CancelCheckpointMarker) bufferOrEvent.getEvent(), bufferOrEvent.getChannelIndex());
 			}
 			else {
@@ -140,11 +145,14 @@ public class BarrierTracker implements CheckpointBarrierHandler {
 		return 0L;
 	}
 
+	/**
+	 * 处理上游算子发过来的barrier数据；
+	 */
 	private void processBarrier(CheckpointBarrier receivedBarrier, int channelIndex) throws Exception {
 		final long barrierId = receivedBarrier.getId();
 
 		// fast path for single channel trackers
-		if (totalNumberOfInputChannels == 1) {
+		if (totalNumberOfInputChannels == 1) {  //只有一个 inputChannel，则直接触发checkpoint
 			notifyCheckpoint(barrierId, receivedBarrier.getTimestamp(), receivedBarrier.getCheckpointOptions());
 			return;
 		}
@@ -173,6 +181,7 @@ public class BarrierTracker implements CheckpointBarrierHandler {
 				// checkpoint can be triggered (or is aborted and all barriers have been seen)
 				// first, remove this checkpoint and all all prior pending
 				// checkpoints (which are now subsumed)
+				// 在当前 barrierId 前面的所有未完成的 checkpoint 都可以丢弃了
 				for (int i = 0; i <= pos; i++) {
 					pendingCheckpoints.pollFirst();
 				}
@@ -183,6 +192,7 @@ public class BarrierTracker implements CheckpointBarrierHandler {
 						LOG.debug("Received all barriers for checkpoint {}", barrierId);
 					}
 
+					//通知进行 checkpoint
 					notifyCheckpoint(receivedBarrier.getId(), receivedBarrier.getTimestamp(), receivedBarrier.getCheckpointOptions());
 				}
 			}
@@ -260,6 +270,7 @@ public class BarrierTracker implements CheckpointBarrierHandler {
 		}
 	}
 
+	//通知具体的StreamTask，所有InputChannel的barrier都收到了，可以开始进行checkpoint了
 	private void notifyCheckpoint(long checkpointId, long timestamp, CheckpointOptions checkpointOptions) throws Exception {
 		if (toNotifyOnCheckpoint != null) {
 			CheckpointMetaData checkpointMetaData = new CheckpointMetaData(checkpointId, timestamp);
@@ -267,7 +278,7 @@ public class BarrierTracker implements CheckpointBarrierHandler {
 				.setBytesBufferedInAlignment(0L)
 				.setAlignmentDurationNanos(0L);
 
-			toNotifyOnCheckpoint.triggerCheckpointOnBarrier(checkpointMetaData, checkpointOptions, checkpointMetrics);
+			toNotifyOnCheckpoint.triggerCheckpointOnBarrier(checkpointMetaData, checkpointOptions, checkpointMetrics);  //<<<<<<<< 具体调用的还是StreamTask的方法；奥，最终又调用到StreamTask的performCheckpoint方法；
 		}
 	}
 

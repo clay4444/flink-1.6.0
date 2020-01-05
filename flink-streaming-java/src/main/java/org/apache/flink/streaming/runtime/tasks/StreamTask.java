@@ -146,7 +146,7 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
 	protected StateBackend stateBackend;
 
 	/** The external storage where checkpoint data is persisted. */
-	private CheckpointStorage checkpointStorage;
+	private CheckpointStorage checkpointStorage;  //检查点存储的抽象，有两个实现： FsCheckpointStorage 和 MemoryBackendCheckpointStorage，checkpointStorage 则是从 stateBackend 中生成的；
 
 	/**
 	 * The internal {@link ProcessingTimeService} used to define the current
@@ -290,7 +290,7 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
 			 *
 			 * 这里就看出来了，OperatorChain不是rpc传过来的，是任务在真正执行时 new 出来的；
 			 */
-			operatorChain = new OperatorChain<>(this, streamRecordWriters);  // <<<<<<<<<<<< 猜测一下：应该是从environment中取出 StreamConfig，然后构建OperatorChain的，
+			operatorChain = new OperatorChain<>(this, streamRecordWriters);  // <<<<<<<<<<<< 猜测一下：应该是从environment中取出 StreamConfig，然后构建OperatorChain的， yes
 			headOperator = operatorChain.getHeadOperator();
 
 			// task specific initialization
@@ -599,6 +599,7 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
 	// Task 的 invokable.triggerCheckpoint(checkpointMetaData, checkpointOptions) 调用到这里
 	// ------------------------------------------------------------------------
 
+	// Source Task 的 invokable.triggerCheckpoint(checkpointMetaData, checkpointOptions) 调用到这里
 	@Override
 	public boolean triggerCheckpoint(CheckpointMetaData checkpointMetaData, CheckpointOptions checkpointOptions) throws Exception {
 		try {
@@ -607,7 +608,7 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
 					.setBytesBufferedInAlignment(0L)
 					.setAlignmentDurationNanos(0L);
 
-			return performCheckpoint(checkpointMetaData, checkpointOptions, checkpointMetrics);
+			return performCheckpoint(checkpointMetaData, checkpointOptions, checkpointMetrics);  // 这里
 		}
 		catch (Exception e) {
 			// propagate exceptions only if the task is still in "running" state
@@ -622,6 +623,10 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
 		}
 	}
 
+	/**
+	 * 下游的Task(非Source的Task) 在收到barrier后触发这个方法
+	 * CheckpointBarrierHandler 调用这个方法通知的当前StreamTask
+	 */
 	@Override
 	public void triggerCheckpointOnBarrier(
 			CheckpointMetaData checkpointMetaData,
@@ -629,7 +634,7 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
 			CheckpointMetrics checkpointMetrics) throws Exception {
 
 		try {
-			performCheckpoint(checkpointMetaData, checkpointOptions, checkpointMetrics);
+			performCheckpoint(checkpointMetaData, checkpointOptions, checkpointMetrics);// <<<<<< 看这里，也是调用的这个方法，也就是说所有StreamTask处理checkpoint都是一样的逻辑
 		}
 		catch (CancelTaskException e) {
 			LOG.info("Operator {} was cancelled while performing checkpoint {}.",
@@ -656,7 +661,7 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
 	}
 
 	//StreamTask checkpoint 的实现
-	// 注意，从这里开始，整个执行链路上开始出现Barrier，可以和前面讲Fault Tolerant原理 的地方结合看一下。
+	// 注意，从这里开始，整个执行链路上开始出现Barrier，而且所有StreamTask(包括SourceTask)处理checkpoint都是一样的逻辑
 	private boolean performCheckpoint(
 			CheckpointMetaData checkpointMetaData,
 			CheckpointOptions checkpointOptions,
@@ -681,16 +686,16 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
 				operatorChain.prepareSnapshotPreBarrier(checkpointMetaData.getCheckpointId());
 
 				// Step (2): Send the checkpoint barrier downstream
-				// 第二步：往下游发送 barrier，点进去继续进行分析
+				// 第二步：先往下游发送 barrier，点进去继续进行分析， 注意，此时上游所有inputChannel的barrier都已经到了；
 				operatorChain.broadcastCheckpointBarrier(
 						checkpointMetaData.getCheckpointId(),
 						checkpointMetaData.getTimestamp(),
 						checkpointOptions);
 
 				// Step (3): Take the state snapshot. This should be largely asynchronous, to not impact progress of the streaming topology
-				// 第三步：进行状态快照，这应该是异步进行的，不影响 流 系统其他的处理进度
+				// 第三步：进行状态快照，这应该是异步进行的，不影响流系统其他的处理进度
 				// 完成 broadcastCheckpointBarrier 方法后，在 checkpointState() 方法中，StreamTask还 做了很多别的工作：
-				checkpointState(checkpointMetaData, checkpointOptions, checkpointMetrics);
+				checkpointState(checkpointMetaData, checkpointOptions, checkpointMetrics);  // <<<<<< 这里，核心  <<<<<<<<<<
 				return true;
 			}
 			else {
@@ -763,15 +768,26 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
 		}
 	}
 
+	/**
+	 * >>>>>>>>>>>>>>>>>>>>>>>> 核心 <<<<<<<<<<<<<<<<<<<<<<<
+	 * 在往下游发送完barrier之后，开始保存算子的state
+	 *
+	 * CheckpointStorage 是对状态存储系统的抽象，它有两个不同的实现，分别是 MemoryBackendCheckpointStorage 和 FsCheckpointStorage。CheckpointStorage则是从statebackend中生成的；
+	 * MemoryBackendCheckpointStorage 会将所有算子的检查点状态存储在 JobManager 的内存中，通常不适合在生产环境中使用；
+	 * 而 FsCheckpointStorage 则会把所有算子的检查点状态持久化存储在文件系统中。
+	 * CheckpointStorageLocation 是对检查点状态存储位置的一个抽象，它能够提供获取检查点输出流的方法，通过输出流将状态和元数据写入到存储系统中。输出流关闭时可以获得状态句柄（StateHandle），后面可以使用句柄重新读取写入的状态。
+	 */
 	private void checkpointState(
 			CheckpointMetaData checkpointMetaData,
 			CheckpointOptions checkpointOptions,
 			CheckpointMetrics checkpointMetrics) throws Exception {
 
+		//1. 解析得到 CheckpointStorageLocation
 		CheckpointStreamFactory storage = checkpointStorage.resolveCheckpointStorageLocation(
 				checkpointMetaData.getCheckpointId(),
 				checkpointOptions.getTargetLocation());
 
+		//2. 将存储过程封装为 CheckpointingOperation，开始进行检查点存储操作
 		CheckpointingOperation checkpointingOperation = new CheckpointingOperation(
 			this,
 			checkpointMetaData,
@@ -779,7 +795,7 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
 			storage,
 			checkpointMetrics);
 
-		checkpointingOperation.executeCheckpointing();
+		checkpointingOperation.executeCheckpointing(); //执行存储过程
 	}
 
 	//初始化每个算子的状态，在该方法中，如果task是从失败中恢复的话，其保存的state也会被restore进来。
@@ -857,6 +873,9 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
 
 	/**
 	 * This runnable executes the asynchronous parts of all involved backend snapshots for the subtask.
+	 *
+	 * checkpoint 异步执行的部分
+	 * 主要就是异步完成上面所有算子的OperatorSnapshotFutures(如果之前的模式是同步的，那这里本身就是已经完成的)，然后向 CheckpointCoordinator 汇报，此次checkpoint成功 (rpc到jobMaster)
 	 */
 	@VisibleForTesting
 	protected static final class AsyncCheckpointRunnable implements Runnable, Closeable {
@@ -887,6 +906,7 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
 			this.asyncStartNanos = asyncStartNanos;
 		}
 
+		//核心，run()方法；
 		@Override
 		public void run() {
 			FileSystemSafetyNet.initializeSafetyNetForThread();
@@ -898,6 +918,9 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
 				TaskStateSnapshot localTaskOperatorSubtaskStates =
 					new TaskStateSnapshot(operatorSnapshotsInProgress.size());
 
+				// 完成每一个 operator 的状态写入
+				// 如果是同步 checkpoint，那么在此之前状态已经写入完成
+				// 如果是异步 checkpoint，那么在这里才会写入状态
 				for (Map.Entry<OperatorID, OperatorSnapshotFutures> entry : operatorSnapshotsInProgress.entrySet()) {
 
 					OperatorID operatorID = entry.getKey();
@@ -924,6 +947,7 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
 				if (asyncCheckpointState.compareAndSet(CheckpointingOperation.AsyncCheckpointState.RUNNING,
 					CheckpointingOperation.AsyncCheckpointState.COMPLETED)) {
 
+					// >>>>>>>>> 报告 snapshot 完成  (所有算子的 snapshot 都已完成)
 					reportCompletedSnapshotStates(
 						jobManagerTaskOperatorSubtaskStates,
 						localTaskOperatorSubtaskStates,
@@ -942,6 +966,11 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
 			}
 		}
 
+		/**
+		 * 报告 snapshot 完成
+		 * 最终调用到 TaskStateManagerImpl 的 reportTaskStateSnapshots()方法，
+		 * 主要逻辑其实就是向 CheckpointCoordinator 发送ACK，表示当前算子的checkpoint已经完成 (rpc到jobMaster)
+		 */
 		private void reportCompletedSnapshotStates(
 			TaskStateSnapshot acknowledgedTaskStateSnapshot,
 			TaskStateSnapshot localTaskStateSnapshot,
@@ -959,7 +988,7 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
 			// we signal stateless tasks by reporting null, so that there are no attempts to assign empty state
 			// to stateless tasks on restore. This enables simple job modifications that only concern
 			// stateless without the need to assign them uids to match their (always empty) states.
-			taskStateManager.reportTaskStateSnapshots(
+			taskStateManager.reportTaskStateSnapshots(  //这里
 				checkpointMetaData,
 				checkpointMetrics,
 				hasAckState ? acknowledgedTaskStateSnapshot : null,
@@ -1067,6 +1096,12 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
 
 	// ------------------------------------------------------------------------
 
+	/**
+	 * 检查点快照的过程被封装为 CheckpointingOperation
+	 *
+	 * CheckpointingOperation 中，快照操作分为两个阶段，第一阶段是同步执行的，第二阶段是异步执行的：
+	 *
+	 */
 	private static final class CheckpointingOperation {
 
 		private final StreamTask<?, ?> owner;
@@ -1083,6 +1118,7 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
 
 		// ------------------------
 
+		//由于每一个StreamTask可能包含多个算子，因而内部使用一个 Map 维护 OperatorID -> OperatorSnapshotFutures 的关系。 OperatorSnapshotFutures是一个算子进行checkpoint过程的结果
 		private final Map<OperatorID, OperatorSnapshotFutures> operatorSnapshotsInProgress;
 
 		public CheckpointingOperation(
@@ -1101,17 +1137,18 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
 			this.operatorSnapshotsInProgress = new HashMap<>(allOperators.length);
 		}
 
-		/**
-		 * 主要是执行异步的 snapshot State；
-		 */
+		//执行检查点快照
 		public void executeCheckpointing() throws Exception {
 			startSyncPartNano = System.nanoTime();
 
 			try {
-				//这里，就是调用 StreamOperator 进行snapshotState的入口方法
+				//1. 同步执行的部分 (这里也不是同步执行的呀，为什么说是同步执行的呢？)
+				//底层源码一直往下追就明白了，这里可以是同步执行的，也可以是异步执行的，取决于配置；
 				for (StreamOperator<?> op : allOperators) {
-					checkpointStreamOperator(op);
+					checkpointStreamOperator(op);  //<<< 这里，每个算子的执行结果(可能还没执行完)已经放在了operatorSnapshotsInProgress这个容器中
 				}
+
+				//此时operatorSnapshotsInProgress这个容器已经填充完了，所有算子的执行结果描述都放在了这个算子中；
 
 				if (LOG.isDebugEnabled()) {
 					LOG.debug("Finished synchronous checkpoints for checkpoint {} on task {}",
@@ -1123,7 +1160,11 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
 				checkpointMetrics.setSyncDurationMillis((startAsyncPartNano - startSyncPartNano) / 1_000_000);
 
 				// we are transferring ownership over snapshotInProgressList for cleanup to the thread, active on submit
-				//这里注册了一个Runnable，在执行完checkpoint之后向JobManager 发出CompletedCheckPoint消息，这也是fault tolerant两阶段提交的一部分
+				// 2. 异步执行的部分
+				// checkpoint 可以配置成同步执行，也可以配置成异步执行的
+				// 如果是同步执行的，在这里实际上所有的 runnable future 都是已经完成的状态
+
+				//主要就是异步完成上面所有算子的OperatorSnapshotFutures(如果之前的模式是同步的，那这里本身就是已经完成的)，然后向 CheckpointCoordinator 汇报，此次checkpoint成功 (rpc到jobMaster)  所以接下来的代码跳到 CheckpointCoordinator.receiveAcknowledgeMessage
 				AsyncCheckpointRunnable asyncCheckpointRunnable = new AsyncCheckpointRunnable(
 					owner,
 					operatorSnapshotsInProgress,
@@ -1165,11 +1206,14 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
 			}
 		}
 
+		//对每个算子的状态进行checkpoint，主要就是调用算子的snapshotState()方法
 		@SuppressWarnings("deprecation")
 		private void checkpointStreamOperator(StreamOperator<?> op) throws Exception {
 			if (null != op) {
 
-				OperatorSnapshotFutures snapshotInProgress = op.snapshotState(
+				// 调用 StreamOperator.snapshotState 方法进行快照
+				// 返回的结果是 runnable future，可能是已经执行完了，也可能没有执行完
+				OperatorSnapshotFutures snapshotInProgress = op.snapshotState(  //看这里，调用了算子的 snapshotState() 方法， OperatorSnapshotFutures是一个算子进行checkpoint过程的结果
 						checkpointMetaData.getCheckpointId(),
 						checkpointMetaData.getTimestamp(),
 						checkpointOptions,

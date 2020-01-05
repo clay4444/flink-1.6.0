@@ -68,6 +68,16 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  * {@link OneInputStreamOperator} concurrently with the timer callback or other things.
  *
  * @param <IN> The type of the record that can be read with this record reader.
+ *
+ *            数据输入的逻辑在InputGate.java源码解析中；
+ *
+ *  之前我们说一个Task 通过循环调用 InputGate.getNextBufferOrEvent 方法获取输入数据，其实是不太准确的，其实是通过 StreamInputProcessor 创建的CheckpointBarrierHandler 处理的输入数据，
+ *  CheckpointBarrierHandler是对InputGate的又一层封装，也就是 StreamInputProcessor -> CheckpointBarrierHandler -> InputGate -> InputChannel 四层，
+ *
+ *  CheckpointBarrierHandler有两种具体实现
+ *            1.BarrierTracker 对应 AT_LEAST_ONCE
+ *            2.BarrierBuffer 对应 EXACTLY_ONCE
+ *
  */
 @Internal
 public class StreamInputProcessor<IN> {
@@ -80,7 +90,7 @@ public class StreamInputProcessor<IN> {
 
 	private final DeserializationDelegate<StreamElement> deserializationDelegate;
 
-	private final CheckpointBarrierHandler barrierHandler;
+	private final CheckpointBarrierHandler barrierHandler;  // 通过它来获取数据，
 
 	private final Object lock;
 
@@ -226,7 +236,7 @@ public class StreamInputProcessor<IN> {
 			}
 
 			//获取下一个 BufferOrEvent，这是个阻塞的调用
-			final BufferOrEvent bufferOrEvent = barrierHandler.getNextNonBlocked();
+			final BufferOrEvent bufferOrEvent = barrierHandler.getNextNonBlocked();  // <<<<<<<< 这里，通过 barrierHandler 处理数据，注意这里只会返回用户数据，barrier数据在getNextNonBlocked()方法内已经处理了，直接调的StreamTask的方法；
 			if (bufferOrEvent != null) {
 				if (bufferOrEvent.isBuffer()) {
 					//如果是Buffer，要确定是哪个 channel 的，然后用对应 channel 的反序列化器解析

@@ -25,6 +25,8 @@ import org.apache.flink.runtime.executiongraph.ExecutionAttemptID;
 
 /**
  * Responder for checkpoint acknowledge and decline messages in the {@link Task}.
+ * 给 CheckpointCoordinator 发送 ACK 响应的接口
+ * 主要的实现就是 RpcCheckpointResponder，主要是通过 RPC 调用通知 CheckpointCoordinatorGateway，即通知给 JobMaster, JobMaster 调用 CheckpointCoordinator.receiveAcknowledgeMessage() 和 CheckpointCoordinator.receiveDeclineMessage() 进行处理。
  */
 public interface CheckpointResponder {
 

@@ -82,6 +82,7 @@ public class TaskStateManagerImpl implements TaskStateManager {
 		this.checkpointResponder = checkpointResponder;
 	}
 
+	//向CheckpointCoordinator发送ACK，表示当前算子的checkpoint已经完成
 	@Override
 	public void reportTaskStateSnapshots(
 		@Nonnull CheckpointMetaData checkpointMetaData,
@@ -93,6 +94,7 @@ public class TaskStateManagerImpl implements TaskStateManager {
 
 		localStateStore.storeLocalState(checkpointId, localState);
 
+		//发送 ACK 响应给 CheckpointCoordinator
 		checkpointResponder.acknowledgeCheckpoint(
 			jobId,
 			executionAttemptID,

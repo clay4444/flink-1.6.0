@@ -49,6 +49,12 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  * <p>To avoid back-pressuring the input streams (which may cause distributed deadlocks), the
  * BarrierBuffer continues receiving buffers from the blocked channels and stores them internally until
  * the blocks are released.
+ *
+ * 处理barrier的，对应 EXACTLY_ONCE 模式
+ *
+ * 它除了要追踪每一个 input channel 接收到的 barrier 之外，在接收到所有的 barrier 之前，先收到 barrier 的 channel 要进入阻塞状态。当然为了避免进入“反压”状态，BarrierBuffer 会继续接收数据，但会对接收到的数据进行缓存，直到所有的 barrier 都到达。
+ *
+ * 也就是说它和AT_LEAST_ONCE模式的区别只是，在收到所有inputChannel之前，是否会往下游发送数据，在EXACTLY_ONCE 模式下，只有等待barrier对齐之后，才会往下游发送数据，否则是放在缓存中的；
  */
 @Internal
 public class BarrierBuffer implements CheckpointBarrierHandler {
@@ -56,7 +62,7 @@ public class BarrierBuffer implements CheckpointBarrierHandler {
 	private static final Logger LOG = LoggerFactory.getLogger(BarrierBuffer.class);
 
 	/** The gate that the buffer draws its input from. */
-	private final InputGate inputGate;
+	private final InputGate inputGate;  //也是通过 InputChannel 获取数据
 
 	/** Flags that indicate whether a channel is currently blocked/buffered. */
 	private final boolean[] blockedChannels;
@@ -65,7 +71,7 @@ public class BarrierBuffer implements CheckpointBarrierHandler {
 	private final int totalNumberOfInputChannels;
 
 	/** To utility to write blocked data to a file channel. */
-	private final BufferBlocker bufferBlocker;
+	private final BufferBlocker bufferBlocker;   //<<<<<<< 用于缓存被阻塞的channel接收的数据
 
 	/**
 	 * The pending blocked buffer/event sequences. Must be consumed before requesting further data
@@ -83,7 +89,7 @@ public class BarrierBuffer implements CheckpointBarrierHandler {
 	 * The sequence of buffers/events that has been unblocked and must now be consumed before
 	 * requesting further data from the input gate.
 	 */
-	private BufferOrEventSequence currentBuffered;
+	private BufferOrEventSequence currentBuffered;    //当前缓存的数据
 
 	/** Handler that receives the checkpoint notifications. */
 	private AbstractInvokable toNotifyOnCheckpoint;
@@ -161,6 +167,7 @@ public class BarrierBuffer implements CheckpointBarrierHandler {
 	public BufferOrEvent getNextNonBlocked() throws Exception {
 		while (true) {
 			// process buffered BufferOrEvents before grabbing new ones
+			// 先处理缓存的数据
 			Optional<BufferOrEvent> next;
 			if (currentBuffered == null) {
 				next = inputGate.getNextBufferOrEvent();
@@ -187,7 +194,7 @@ public class BarrierBuffer implements CheckpointBarrierHandler {
 			}
 
 			BufferOrEvent bufferOrEvent = next.get();
-			if (isBlocked(bufferOrEvent.getChannelIndex())) {
+			if (isBlocked(bufferOrEvent.getChannelIndex())) {   // 如果当前 channel 是 block 状态，先写入缓存
 				// if the channel is blocked we, we just store the BufferOrEvent
 				bufferBlocker.add(bufferOrEvent);
 				checkSizeLimit();
@@ -383,6 +390,7 @@ public class BarrierBuffer implements CheckpointBarrierHandler {
 		}
 	}
 
+	//通知StreamTask开始触发checkpoint
 	private void notifyCheckpoint(CheckpointBarrier checkpointBarrier) throws Exception {
 		if (toNotifyOnCheckpoint != null) {
 			CheckpointMetaData checkpointMetaData =
@@ -394,7 +402,7 @@ public class BarrierBuffer implements CheckpointBarrierHandler {
 					.setBytesBufferedInAlignment(bytesBuffered)
 					.setAlignmentDurationNanos(latestAlignmentDurationNanos);
 
-			toNotifyOnCheckpoint.triggerCheckpointOnBarrier(
+			toNotifyOnCheckpoint.triggerCheckpointOnBarrier( //<<<< 看这里，具体调用的还是StreamTask的方法；奥，最终又调用到StreamTask的performCheckpoint方法；
 				checkpointMetaData,
 				checkpointBarrier.getCheckpointOptions(),
 				checkpointMetrics);
