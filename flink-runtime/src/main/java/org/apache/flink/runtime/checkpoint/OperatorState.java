@@ -32,6 +32,8 @@ import java.util.Objects;
 /**
  * Simple container class which contains the raw/managed operator state and key-group state handles from all sub
  * tasks of an operator and therefore represents the complete state of a logical operator.
+ *
+ * OperatorState 是算子状态句柄的一层封装：
  */
 public class OperatorState implements CompositeStateHandle {
 

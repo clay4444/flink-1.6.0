@@ -116,10 +116,16 @@ public class CheckpointCoordinator {
 	private final ExecutionVertex[] tasksToCommitTo;   //对应JobGraph中的commitVertices，包含所有节点
 
 	/** Map from checkpoint ID to the pending checkpoint */
-	private final Map<Long, PendingCheckpoint> pendingCheckpoints;
+	private final Map<Long, PendingCheckpoint> pendingCheckpoints;  //所有正在进行的checkpoint，
 
 	/** Completed checkpoints. Implementations can be blocking. Make sure calls to methods
 	 * accessing this don't block the job manager actor and run asynchronously. */
+
+	/**
+	 *  CompletedCheckpointStore 代表已经完成的checkpoint的地址，目前有两种实现
+	 *  1.StandaloneCompletedCheckpointStore 简单地将 CompletedCheckpointStore 存放在一个数组中
+	 *  2.ZooKeeperCompletedCheckpointStore 提供高可用实现：先将 CompletedCheckpointStore 写入到 RetrievableStateStorageHelper 中（通常是文件系统），然后将文件句柄存在 ZK 中
+	 */
 	private final CompletedCheckpointStore completedCheckpointStore;
 
 	/** The root checkpoint state backend, which is responsible for initializing the
@@ -710,6 +716,9 @@ public class CheckpointCoordinator {
 	 * Receives a {@link DeclineCheckpoint} message for a pending checkpoint.
 	 *
 	 * @param message Checkpoint decline from the task manager
+	 *
+	 * 在 Task 进行 checkpoint 的过程，可能会发生异常导致 checkpoint 失败，在这种情况下会通过 CheckpointResponder 发出回绝的消息。
+	 * 当 CheckpointCoordinator 接收到 DeclineCheckpoint 消息后会移除 PendingCheckpoint，并尝试丢弃已经接收到的 Ack 消息中已完成的状态句柄：
 	 */
 	public void receiveDeclineMessage(DeclineCheckpoint message) {
 		if (shutdown || message == null) {
@@ -772,12 +781,12 @@ public class CheckpointCoordinator {
 	 *
 	 * 1.根据 Ack 的 checkpointID 从 Map<Long, PendingCheckpoint> pendingCheckpoints 中查找对应的 PendingCheckpoint
 	 * 2.若存在对应的 PendingCheckpoint
-	 * 		1.这个 PendingCheckpoint 没有被丢弃，调用 PendingCheckpoint.acknowledgeTask 方法处理 Ack，根据处理结果的不同：
-	 * 			1.SUCCESS：判断是否已经接受了所有需要响应的 Ack，如果是，则调用 completePendingCheckpoint 完成此次 checkpoint
-	 * 			2.DUPLICATE：Ack 消息重复接收，直接忽略
-	 * 			3.UNKNOWN：未知的 Ack 消息，清理上报的 Ack 中携带的状态句柄
-	 * 			4.DISCARD：Checkpoint 已经被 discard，清理上报的 Ack 中携带的状态句柄
-	 * 		2.这个 PendingCheckpoint 已经被丢弃，抛出异常
+	 * 		2.1.这个 PendingCheckpoint 没有被丢弃，调用 PendingCheckpoint.acknowledgeTask 方法处理 Ack，根据处理结果的不同：
+	 * 			2.1.1.SUCCESS：判断是否已经接受了所有需要响应的 Ack，如果是，则调用 completePendingCheckpoint 完成此次 checkpoint
+	 * 			2.1.2.DUPLICATE：Ack 消息重复接收，直接忽略
+	 * 			2.1.3.UNKNOWN：未知的 Ack 消息，清理上报的 Ack 中携带的状态句柄
+	 * 			2.1.4.DISCARD：Checkpoint 已经被 discard，清理上报的 Ack 中携带的状态句柄
+	 * 		2.2.这个 PendingCheckpoint 已经被丢弃，抛出异常
 	 * 3.若不存在对应的 PendingCheckpoint，则清理上报的 Ack 中携带的状态句柄
 	 */
 	public boolean receiveAcknowledgeMessage(AcknowledgeCheckpoint message) throws CheckpointException {
@@ -799,12 +808,14 @@ public class CheckpointCoordinator {
 				return false;
 			}
 
+			//1.根据 Ack 的 checkpointID 从 Map<Long, PendingCheckpoint> pendingCheckpoints 中查找对应的 PendingCheckpoint
 			final PendingCheckpoint checkpoint = pendingCheckpoints.get(checkpointId);
 
-			if (checkpoint != null && !checkpoint.isDiscarded()) {
+			if (checkpoint != null && !checkpoint.isDiscarded()) {  //2.若存在对应的 PendingCheckpoint 且 2.1.这个 PendingCheckpoint 没有被丢弃
 
+				//<<<<< 调用 PendingCheckpoint.acknowledgeTask 方法处理 Ack，根据处理结果的不同：  如何处理的？看源码 底层核心就是两个容器；
 				switch (checkpoint.acknowledgeTask(message.getTaskExecutionId(), message.getSubtaskState(), message.getCheckpointMetrics())) {
-					case SUCCESS:
+					case SUCCESS:   //2.1.1.SUCCESS：判断是否已经接受了所有需要响应的 Ack，如果是，则调用 completePendingCheckpoint 完成此次 checkpoint
 						LOG.debug("Received acknowledge message for checkpoint {} from task {} of job {}.",
 							checkpointId, message.getTaskExecutionId(), message.getJob());
 
@@ -837,12 +848,12 @@ public class CheckpointCoordinator {
 
 				return true;
 			}
-			else if (checkpoint != null) {
+			else if (checkpoint != null) {  //2.2.这个 PendingCheckpoint 已经被丢弃，抛出异常
 				// this should not happen
 				throw new IllegalStateException(
 						"Received message for discarded but non-removed checkpoint " + checkpointId);
 			}
-			else {
+			else {  // 3.若不存在对应的 PendingCheckpoint，则清理上报的 Ack 中携带的状态句柄
 				boolean wasPendingCheckpoint;
 
 				// message is for an unknown checkpoint, or comes too late (checkpoint disposed)
@@ -873,9 +884,18 @@ public class CheckpointCoordinator {
 	 * @param pendingCheckpoint to complete
 	 * @throws CheckpointException if the completion failed
 	 *
-	 * 把pendinCgCheckpoint转换为CompletedCheckpoint
-	 * 把CompletedCheckpoint加入已完成的检查点集合，并从未完成检查点集合删除该检查点
-	 * 再度向各个operator发出rpc，通知该检查点已完成
+	 * 一旦 PendingCheckpoint 确认所有 Ack 消息都已经接收，那么就可以完成此次 checkpoint 了，具体包括：
+	 * 1.调用 PendingCheckpoint.finalizeCheckpoint() 将 PendingCheckpoint 转化为 CompletedCheckpoint
+	 * 		1.1 获取 CheckpointMetadataOutputStream，将所有的状态句柄信息通过 CheckpointMetadataOutputStream 写入到存储系统中
+	 * 		1.2 创建一个 CompletedCheckpoint 对象
+	 * 2.将 CompletedCheckpoint 保存到 CompletedCheckpointStore 中
+	 * 		2.1 CompletedCheckpointStore 有两种实现，分别为 StandaloneCompletedCheckpointStore 和 ZooKeeperCompletedCheckpointStore
+	 * 		2.2 StandaloneCompletedCheckpointStore 简单地将 CompletedCheckpointStore 存放在一个数组中
+	 * 		2.3 ZooKeeperCompletedCheckpointStore 提供高可用实现：先将 CompletedCheckpointStore 写入到 RetrievableStateStorageHelper 中（通常是文件系统），然后将文件句柄存在 ZK 中
+	 * 		2.4 保存的 CompletedCheckpointStore 数量是有限的，会删除旧的快照
+	 * 3.移除被越过的 PendingCheckpoint，因为 CheckpointID 是递增的，那么所有比当前完成的 CheckpointID 小的 PendingCheckpoint 都可以被丢弃了
+	 * 4.依次调用 Execution.notifyCheckpointComplete() 通知所有的Task当前Checkpoint已经完成
+	 * 		4.1 通过 RPC 调用 TaskExecutor.confirmCheckpoint() 告知对应的 Task
 	 */
 	private void completePendingCheckpoint(PendingCheckpoint pendingCheckpoint) throws CheckpointException {
 		final long checkpointId = pendingCheckpoint.getCheckpointId();
@@ -887,6 +907,7 @@ public class CheckpointCoordinator {
 
 		try {
 			try {
+				// 1.调用 PendingCheckpoint.finalizeCheckpoint() 将 PendingCheckpoint 转化为 CompletedCheckpoint
 				completedCheckpoint = pendingCheckpoint.finalizeCheckpoint();
 			}
 			catch (Exception e1) {
@@ -904,7 +925,14 @@ public class CheckpointCoordinator {
 			// TODO: add savepoints to completed checkpoint store once FLINK-4815 has been completed
 			if (!completedCheckpoint.getProperties().isSavepoint()) {
 				try {
-					completedCheckpointStore.addCheckpoint(completedCheckpoint);
+					/**
+					 * 2.将 CompletedCheckpoint 保存到 CompletedCheckpointStore 中
+					 * 		2.1 CompletedCheckpointStore 有两种实现，分别为 StandaloneCompletedCheckpointStore 和 ZooKeeperCompletedCheckpointStore
+					 * 		2.2 StandaloneCompletedCheckpointStore 简单地将 CompletedCheckpointStore 存放在一个数组中
+					 * 		2.3 ZooKeeperCompletedCheckpointStore 提供高可用实现：先将 CompletedCheckpointStore 写入到 RetrievableStateStorageHelper 中（通常是文件系统），然后将文件句柄存在 ZK 中
+					 * 		2.4 保存的 CompletedCheckpointStore 数量是有限的，会删除旧的快照
+					 */
+					completedCheckpointStore.addCheckpoint(completedCheckpoint); // <<<<
 				} catch (Exception exception) {
 					// we failed to store the completed checkpoint. Let's clean up
 					executor.execute(new Runnable() {
@@ -955,10 +983,11 @@ public class CheckpointCoordinator {
 		// send the "notify complete" call to all vertices
 		final long timestamp = completedCheckpoint.getTimestamp();
 
+		//4.依次调用 Execution.notifyCheckpointComplete() 通知所有的 Task 当前 Checkpoint 已经完成
 		for (ExecutionVertex ev : tasksToCommitTo) {
 			Execution ee = ev.getCurrentExecutionAttempt();
 			if (ee != null) {
-				ee.notifyCheckpointComplete(checkpointId, timestamp);
+				ee.notifyCheckpointComplete(checkpointId, timestamp); //内部就是通过 RPC 调用 TaskExecutor.confirmCheckpoint() 告知对应的 Task
 			}
 		}
 	}
@@ -1061,6 +1090,8 @@ public class CheckpointCoordinator {
 	 * @throws IllegalStateException If the parallelism changed for an operator
 	 *                               that restores <i>non-partitioned</i> state from this
 	 *                               checkpoint.
+	 *
+	 * jobMaster开始执行任务时，会重试从上次最近成功的一次checkpoint开始恢复
 	 */
 	public boolean restoreLatestCheckpointedState(
 			Map<JobVertexID, ExecutionJobVertex> tasks,
@@ -1089,7 +1120,7 @@ public class CheckpointCoordinator {
 			LOG.debug("Status of the shared state registry of job {} after restore: {}.", job, sharedStateRegistry);
 
 			// Restore from the latest checkpoint
-			CompletedCheckpoint latest = completedCheckpointStore.getLatestCheckpoint();
+			CompletedCheckpoint latest = completedCheckpointStore.getLatestCheckpoint(); //返回最近成功的一次
 
 			if (latest == null) {
 				if (errorIfNoCheckpoint) {
@@ -1107,6 +1138,10 @@ public class CheckpointCoordinator {
 			// re-assign the task states
 			final Map<OperatorID, OperatorState> operatorStates = latest.getOperatorStates();
 
+			/**
+			 * 状态的分配过程被封装在 StateAssignmentOperation 中。在状态恢复的过程中，假如任务的并行度发生变化，那么每个子任务的状态和先前必然是不一致的，这其中就涉及到状态的平均重新分配问题，
+			 * 关于状态分配的细节，可以参考 Flink 团队的博文 A Deep Dive into Rescalable State in Apache Flink，里面给出了 operator state 和 keyed state 重新分配的详细介绍。
+			 */
 			StateAssignmentOperation stateAssignmentOperation =
 					new StateAssignmentOperation(latest.getCheckpointID(), tasks, operatorStates, allowNonRestoredState);
 

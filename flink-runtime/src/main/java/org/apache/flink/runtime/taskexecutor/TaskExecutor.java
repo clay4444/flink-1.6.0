@@ -735,6 +735,9 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 		}
 	}
 
+	/**
+	 * rpc方法，在CheckpointCoordinator已经完成一个checkpoint时，被调用；通知此次checkpoint已经成功了；
+	 */
 	@Override
 	public CompletableFuture<Acknowledge> confirmCheckpoint(
 			ExecutionAttemptID executionAttemptID,
@@ -745,7 +748,7 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 		final Task task = taskSlotTable.getTask(executionAttemptID);
 
 		if (task != null) {
-			task.notifyCheckpointComplete(checkpointId);
+			task.notifyCheckpointComplete(checkpointId);//这里，通知具体的Task
 
 			return CompletableFuture.completedFuture(Acknowledge.get());
 		} else {

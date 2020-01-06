@@ -58,6 +58,8 @@ import static org.apache.flink.util.Preconditions.checkState;
  *
  * <p>Note that the pending checkpoint, as well as the successful checkpoint keep the
  * state handles always as serialized values, never as actual values.
+ *
+ * 代表一个正在进行中的checkpoint
  */
 public class PendingCheckpoint {
 
@@ -84,9 +86,13 @@ public class PendingCheckpoint {
 
 	private final long checkpointTimestamp;
 
-	private final Map<OperatorID, OperatorState> operatorStates;
+	/**
+	 * 两个核心容器
+	 */
 
-	private final Map<ExecutionAttemptID, ExecutionVertex> notYetAcknowledgedTasks;
+	private final Map<OperatorID, OperatorState> operatorStates;  //已经接收到Ack的算子的状态句柄
+
+	private final Map<ExecutionAttemptID, ExecutionVertex> notYetAcknowledgedTasks;  //需要Ack但还没有接收到的Task
 
 	private final List<MasterState> masterState;
 
@@ -173,6 +179,7 @@ public class PendingCheckpoint {
 		return operatorStates;
 	}
 
+	//notYetAcknowledgedTasks容器为空了，代表所有的task的ack都收到了，此时就代表这个checkpoint完成了；
 	public boolean isFullyAcknowledged() {
 		return this.notYetAcknowledgedTasks.isEmpty() && !discarded;
 	}
@@ -244,6 +251,9 @@ public class PendingCheckpoint {
 		return onCompletionPromise;
 	}
 
+	/**
+	 * 把当前 PendingCheckpoint 转化为 CompletedCheckpoint
+	 */
 	public CompletedCheckpoint finalizeCheckpoint() throws IOException {
 
 		synchronized (lock) {
@@ -255,11 +265,13 @@ public class PendingCheckpoint {
 				final Savepoint savepoint = new SavepointV2(checkpointId, operatorStates.values(), masterState);
 				final CompletedCheckpointStorageLocation finalizedLocation;
 
+				//1.1 获取 CheckpointMetadataOutputStream，将所有的状态句柄信息通过 CheckpointMetadataOutputStream 写入到存储系统中
 				try (CheckpointMetadataOutputStream out = targetLocation.createMetadataOutputStream()) {
 					Checkpoints.storeCheckpointMetadata(savepoint, out);
 					finalizedLocation = out.closeAndFinalizeCheckpoint();
 				}
 
+				//1.2 创建一个 CompletedCheckpoint 对象
 				CompletedCheckpoint completed = new CompletedCheckpoint(
 						jobId,
 						checkpointId,
@@ -302,6 +314,14 @@ public class PendingCheckpoint {
 	 * @param operatorSubtaskStates of the acknowledged task
 	 * @param metrics Checkpoint metrics for the stats
 	 * @return TaskAcknowledgeResult of the operation
+	 *
+	 * 处理具体Task汇报过来的ACK，
+	 * 在 PendingCheckpoint 内部维护了两个 Map，分别是：
+	 * 1.Map<OperatorID, OperatorState> operatorStates; : 已经接收到 Ack 的算子的状态句柄
+	 * 2.Map<ExecutionAttemptID, ExecutionVertex> notYetAcknowledgedTasks;: 需要 Ack 但还没有接收到的 Task
+	 *
+	 * 每当接收到一个 Ack 消息时，PendingCheckpoint 就从 notYetAcknowledgedTasks 中移除对应的 Task，并保存 Ack 携带的状态句柄保存。
+	 * 当 notYetAcknowledgedTasks 为空时，表明所有的 Ack 消息都接收到了。
 	 */
 	public TaskAcknowledgeResult acknowledgeTask(
 			ExecutionAttemptID executionAttemptId,
@@ -313,16 +333,16 @@ public class PendingCheckpoint {
 				return TaskAcknowledgeResult.DISCARDED;
 			}
 
-			final ExecutionVertex vertex = notYetAcknowledgedTasks.remove(executionAttemptId);
+			final ExecutionVertex vertex = notYetAcknowledgedTasks.remove(executionAttemptId); //从notYetAcknowledgedTasks(待完成的task)中移除
 
 			if (vertex == null) {
 				if (acknowledgedTasks.contains(executionAttemptId)) {
-					return TaskAcknowledgeResult.DUPLICATE;
+					return TaskAcknowledgeResult.DUPLICATE; //看是否重复了
 				} else {
 					return TaskAcknowledgeResult.UNKNOWN;
 				}
 			} else {
-				acknowledgedTasks.add(executionAttemptId);
+				acknowledgedTasks.add(executionAttemptId); //加到acknowledgedTasks中，表示这个task已经返回过ack了，下次再发来就会重复
 			}
 
 			List<OperatorID> operatorIDs = vertex.getJobVertex().getOperatorIDs();
@@ -332,7 +352,7 @@ public class PendingCheckpoint {
 			long stateSize = 0L;
 
 			if (operatorSubtaskStates != null) {
-				for (OperatorID operatorID : operatorIDs) {
+				for (OperatorID operatorID : operatorIDs) { //一个Task中会有多个operator
 
 					OperatorSubtaskState operatorSubtaskState =
 						operatorSubtaskStates.getSubtaskStateByOperatorID(operatorID);

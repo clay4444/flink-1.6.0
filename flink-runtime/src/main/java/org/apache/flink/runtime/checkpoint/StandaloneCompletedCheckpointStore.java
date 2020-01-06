@@ -32,6 +32,8 @@ import static org.apache.flink.util.Preconditions.checkArgument;
 
 /**
  * {@link CompletedCheckpointStore} for JobManagers running in {@link HighAvailabilityMode#NONE}.
+ *
+ * 已经完成的checkpoint的存储地址
  */
 public class StandaloneCompletedCheckpointStore implements CompletedCheckpointStore {
 
@@ -41,6 +43,7 @@ public class StandaloneCompletedCheckpointStore implements CompletedCheckpointSt
 	private final int maxNumberOfCheckpointsToRetain;
 
 	/** The completed checkpoints. */
+	//简单实现，存在了一个数组中
 	private final ArrayDeque<CompletedCheckpoint> checkpoints;
 
 	/**
@@ -64,7 +67,7 @@ public class StandaloneCompletedCheckpointStore implements CompletedCheckpointSt
 	@Override
 	public void addCheckpoint(CompletedCheckpoint checkpoint) throws Exception {
 
-		checkpoints.addLast(checkpoint);
+		checkpoints.addLast(checkpoint); //放在了一个内存中的数组队列中
 
 		if (checkpoints.size() > maxNumberOfCheckpointsToRetain) {
 			try {

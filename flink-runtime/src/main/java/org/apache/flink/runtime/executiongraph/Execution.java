@@ -887,6 +887,7 @@ public class Execution implements AccessExecution, Archiveable<ArchivedExecution
 	 *
 	 * @param checkpointId of the completed checkpoint
 	 * @param timestamp of the completed checkpoint
+	 *  通知对应的TaskExecutor，当前checkpoint已经完成了；
 	 */
 	public void notifyCheckpointComplete(long checkpointId, long timestamp) {
 		final LogicalSlot slot = assignedResource;
@@ -894,7 +895,7 @@ public class Execution implements AccessExecution, Archiveable<ArchivedExecution
 		if (slot != null) {
 			final TaskManagerGateway taskManagerGateway = slot.getTaskManagerGateway();
 
-			taskManagerGateway.notifyCheckpointComplete(attemptId, getVertex().getJobId(), checkpointId, timestamp);
+			taskManagerGateway.notifyCheckpointComplete(attemptId, getVertex().getJobId(), checkpointId, timestamp); //rpc通知TaskExecutor
 		} else {
 			LOG.debug("The execution has no slot assigned. This indicates that the execution is " +
 				"no longer running.");

@@ -229,6 +229,83 @@ StateBackend 的另一个主要作用是和检查点相关，负责为作业创�
 
 ### checkpoint
 
+##### 概述
+Flink 分布式快照的核心在与stream barrier，barrier是一种特殊的标记消息，会和正常的消息记录一起在数据流中向前流动。Checkpoint Coordinator在需要触发检查点的时候要求数据源向数据流中注入barrie，
+barrier和正常的数据流中的消息一起向前流动，相当于将数据流中的消息切分到了不同的检查点中。当一个operator从它所有的input channel中都收到了barrier，则会触发当前operator的快照操作，
+并向其下游channel中发射barrier。当所有的sink都反馈完成了快照之后，Checkpoint Coordinator认为检查点创建完毕。
+
+##### 整体流程梳理
+CheckpointCoordinator是checkpoint过程的协调者，它主要负责
+1. 发起 checkpoint 触发的消息，并接收不同 task 对 checkpoint 的响应信息（Ack）
+2. 维护 Ack 中附带的状态句柄（state-handle）的全局视图
+
+在生成ExecutionGraph的最后(ExecutionGraphBuilder的buildGraph()方法末尾)，会调用executionGraph.enableCheckpointing，在这个方法里，会创建CheckpointCoordinator，然后注册一个作业状态的
+监听，当作业状态变为running的时候，会回调coordinator.startCheckpointScheduler()方法，开始checkpoint的流程，其实就是一个scheduler线程池，以用户配置的间隔来执行ScheduledTrigger这个Runnable，
+这个Runnable内部就是调用triggerCheckpoint()方法，所以也就是固定频率调用这个方法，简单总结一下这个方法做的事；
+1. 检查是否可以触发 checkpoint，包括是否需要强制进行 checkpoint，当前正在排队的并发 checkpoint 的数目是否超过阈值，距离上一次成功 checkpoint 的间隔时间是否过小等，如果这些条件不满足，则当前检查点的触发请求不会执行
+2. 检查是否所有需要触发 checkpoint 的 Execution 都是 RUNNING 状态
+3. 生成此次 checkpoint 的 checkpointID（id 是严格自增的），并初始化 CheckpointStorageLocation，CheckpointStorageLocation 是此次 checkpoint 存储位置的抽象，通过 CheckpointStorage.initializeLocationForCheckpoint() 创建
+   （CheckpointStorage 目前有两个具体实现，分别为 FsCheckpointStorage 和 MemoryBackendCheckpointStorage），CheckpointStorage 则是从 StateBackend 中创建；
+4. 生成 PendingCheckpoint，这表示一个处于中间状态的 checkpoint，并保存在 checkpointId -> PendingCheckpoint 这样的映射关系中
+5. 注册一个调度任务，在 checkpoint 超时后取消此次 checkpoint，并重新触发一次新的 checkpoint
+6. 调用Execution.triggerCheckpoint()方法向所有需要trigger的task发起checkpoint请求(最终内部还是调用taskManagerGateway.triggerCheckpoint()这个rpc方法)
+
+**注意点：上述的第6步，调用taskManagerGateway.triggerCheckpoint()方法让具体的task触发checkpoint时，这里的task指的仅仅是SourceTask**
+
+接下来的过程跳到TaskExecutor的triggerCheckpoint(...)方法，找到对应的Task，调用task的triggerCheckpointBarrier(...)方法，Task类又委托给具体的StreamTask去(异步)执行: invokable.triggerCheckpoint(...)方法；
+方法调用进入到StreamTask.triggerCheckpoint(...)方法，然后调用到核心方法: performCheckpoint()
+
+继续往下分析之前，需要了解一下Task处理输入数据的流程，之前我们说一个Task 通过循环调用 InputGate.getNextBufferOrEvent 方法获取输入数据，其实是不太准确的，其实是通过 StreamInputProcessor创建的CheckpointBarrierHandler处理的输入数据，
+CheckpointBarrierHandler是对InputGate的又一层封装，也就是 StreamInputProcessor -> CheckpointBarrierHandler -> InputGate -> InputChannel 四层，
+CheckpointBarrierHandler有两种具体实现:(BarrierTracker 对应 AT_LEAST_ONCE，BarrierBuffer 对应 EXACTLY_ONCE，不同点在下面介绍)，
+Task在处理输入数据的时候，调用StreamInputProcessor的processInput()方法，内部会通过CheckpointBarrierHandler的getNextNonBlocked()方法获取输入数据，需要注意的是这个方法不会返回barrier，只返回用户数据，barrier在这个方法内部已经处理了；
+怎么处理的呢？最终还是调用的StreamTask(toNotifyOnCheckpoint)的triggerCheckpointOnBarrier()方法，而这个方法最终还是调用的 StreamTask的performCheckpoint()方法
+所以结论就是不管是SourceTask还是执行图内部的Task，最终执行checkpoint的方法都是StreamTask的performCheckpoint()方法
+
+所以接下来的重点就是performCheckpoint()方法(主要的作用是把checkpoint存储在分布式文件系统或者jobManager内存)，这个方法主要做了如下几步
+1. 先调用operatorChain.broadcastCheckpointBarrier(...)方法，向下游所有Task(物理外部边)发送barrier注意，此时上游所有inputChannel的barrier都已经到了；
+2. 调用checkpointState()方法，进行状态快照，这个方法是比较核心的方法，需要仔细分析一下
+
+在checkpointState()方法中，主要有两步
+1. 创建一个CheckpointStorageLocation对象，它是对检查点状态存储位置的一个抽象，它能够提供获取检查点输出流的方法，通过输出流将状态和元数据写入到存储系统中。输出流关闭时可以获得状态句柄（StateHandle），后面可以使用句柄重新读取写入的状态。
+而它是通过CheckpointStorage创建的，CheckpointStorage 是对状态存储系统的抽象，它有两个不同的实现，分别是 MemoryBackendCheckpointStorage 和 FsCheckpointStorage。CheckpointStorage则是从statebackend中生成的；
+MemoryBackendCheckpointStorage 会将所有算子的检查点状态存储在 JobManager 的内存中，通常不适合在生产环境中使用；
+而 FsCheckpointStorage 则会把所有算子的检查点状态持久化存储在文件系统中。
+2. 将存储检查点的过程封装为CheckpointingOperation，然后调用executeCheckpointing()方法开始进行检查点存储操作；
+
+在CheckpointingOperation的executeCheckpointing()方法中，也主要分为两步
+1. 同步执行的部分，对当前Task的所有的operator调用checkpointStreamOperator()方法，返回一个future(OperatorSnapshotFutures)，代表这个operator存储分布式快照的结果，
+    这个方法最终会调用到 DefaultOperatorStateBackend的snapshot(...)方法，细节过于复杂，这里不再介绍，直接看源码吧
+2. 异步执行的部分，主要是异步执行AsyncCheckpointRunnable这个Runnable，
+    主要就是异步完成上面所有算子的OperatorSnapshotFutures(如果之前的模式是同步的，那这里本身就是已经完成的)，然后向CheckpointCoordinator汇报ACK，此次checkpoint成功(rpc到jobMaster) 所以接下来的代码又跳回到CheckpointCoordinator的receiveAcknowledgeMessage(...)方法
+    
+在CheckpointCoordinator的receiveAcknowledgeMessage(...)方法中(简单点说就是协调者接到了具体的Task返回的checkpoint进行结果)，主要有如下几步
+1. 根据 Ack 的 checkpointID 从 Map<Long, PendingCheckpoint> pendingCheckpoints 中查找对应的 PendingCheckpoint
+2. 若存在对应的 PendingCheckpoint
+    2.1 这个PendingCheckpoint没有被丢弃，调用 PendingCheckpoint.acknowledgeTask 方法处理 Ack(内部维护两个容器，一个是已经收到ack的Task，一个是未收到ack的Task)，根据处理结果的不同：
+        2.1.1 SUCCESS：判断是否已经接受了所有需要响应的Ack(未收到ack的Task的容器为空了)，如果是，则调用 completePendingCheckpoint(...)方法 完成此次 checkpoint
+        2.1.2 DUPLICATE：Ack 消息重复接收，直接忽略
+        2.1.3 UNKNOWN：未知的 Ack 消息，清理上报的 Ack 中携带的状态句柄
+        2.1.4 DISCARD：Checkpoint 已经被 discard，清理上报的 Ack 中携带的状态句柄
+    2.2 这个 PendingCheckpoint 已经被丢弃，抛出异常
+3.若不存在对应的PendingCheckpoint，则清理上报的Ack中携带的状态句柄；
+
+接下来看completePendingCheckpoint(...)这个方法
+1. 调用 PendingCheckpoint.finalizeCheckpoint() 将 PendingCheckpoint 转化为 CompletedCheckpoint
+    1.1 获取 CheckpointMetadataOutputStream，将所有的状态句柄信息通过 CheckpointMetadataOutputStream 写入到存储系统中
+	1.2 创建一个 CompletedCheckpoint 对象
+2. 将 CompletedCheckpoint 保存到 CompletedCheckpointStore 中
+    2.1 CompletedCheckpointStore 有两种实现，分别为 StandaloneCompletedCheckpointStore 和 ZooKeeperCompletedCheckpointStore
+    2.2 StandaloneCompletedCheckpointStore 简单地将 CompletedCheckpointStore 存放在一个数组中
+    2.3 ZooKeeperCompletedCheckpointStore 提供高可用实现：先将 CompletedCheckpointStore 写入到 RetrievableStateStorageHelper 中（通常是文件系统），然后将文件句柄存在 ZK 中
+    2.4 保存的 CompletedCheckpointStore 数量是有限的，会删除旧的快照
+3. 移除被越过的 PendingCheckpoint，因为 CheckpointID 是递增的，那么所有比当前完成的 CheckpointID 小的 PendingCheckpoint 都可以被丢弃了
+4. 依次调用 Execution.notifyCheckpointComplete() 通知所有的 Task 当前 Checkpoint 已经完成
+    4.1 通过 RPC 调用 TaskExecutor.confirmCheckpoint() 告知对应的 Task
+
+然后流程又跳到 TaskExecutor.confirmCheckpoint(),
+
+
 ##### at_least_one 和 exactly_once 的区别
 注意这两个模式都是在所有的inputChannel都收到barrier的时候，才会通知StreamTask触发checkpoint，不同点是at_least_one下不会阻塞用户流数据，而exactly_once在收到所有inputChannel的数据之前，barrier早到的内些channel的数据也不能向下游发送，
 必须先缓存起来，必须等上游所有channel的barrier都到之后，才会通知触发checkpoint；
@@ -237,9 +314,5 @@ StateBackend 的另一个主要作用是和检查点相关，负责为作业创�
 
 ##### 本地状态存储
 所谓本地状态存储，即在存储检查点快照时，在 Task 所在的 TaskManager 本地文件系统中存储一份副本，这样在进行状态恢复时可以优先从本地状态进行恢复，从而减少网络数据传输的开销。本地状态存储仅针对 keyed state;
-
-
-
-
 
 

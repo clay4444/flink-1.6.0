@@ -1289,6 +1289,7 @@ public class Task implements Runnable, TaskActions, CheckpointListener {
 		}
 	}
 
+	//通知此次checkpoint已经完成了
 	@Override
 	public void notifyCheckpointComplete(final long checkpointID) {
 		final AbstractInvokable invokable = this.invokable;
@@ -1299,7 +1300,7 @@ public class Task implements Runnable, TaskActions, CheckpointListener {
 				@Override
 				public void run() {
 					try {
-						invokable.notifyCheckpointComplete(checkpointID);
+						invokable.notifyCheckpointComplete(checkpointID); // <<<< 这里，又通知具体的 StreamTask
 						taskStateManager.notifyCheckpointComplete(checkpointID);
 					} catch (Throwable t) {
 						if (getExecutionState() == ExecutionState.RUNNING) {

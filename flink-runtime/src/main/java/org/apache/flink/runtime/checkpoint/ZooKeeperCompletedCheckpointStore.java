@@ -65,6 +65,8 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  * same program, it is OK to take any valid successful checkpoint as long as the "history" of
  * checkpoints is consistent. Currently, after recovery we start out with only a single
  * checkpoint to circumvent those situations.
+ *
+ * 已完成checkpoint存储地址，高可用实现，先写入文件系统中，然后句柄放在zk中
  */
 public class ZooKeeperCompletedCheckpointStore implements CompletedCheckpointStore {
 
@@ -222,6 +224,7 @@ public class ZooKeeperCompletedCheckpointStore implements CompletedCheckpointSto
 	 * Synchronously writes the new checkpoints to ZooKeeper and asynchronously removes older ones.
 	 *
 	 * @param checkpoint Completed checkpoint to add.
+	 *    存储已经完成的checkpoint，先存储在文件系统，再把句柄存在zk中；
 	 */
 	@Override
 	public void addCheckpoint(final CompletedCheckpoint checkpoint) throws Exception {
