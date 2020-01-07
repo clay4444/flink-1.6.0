@@ -96,6 +96,8 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  * @param <T> The type of elements in the stream.
  * @param <K> The type of the key by which elements are grouped.
  * @param <W> The type of {@code Window} that the {@code WindowAssigner} assigns the elements to.
+ *
+ * WindowStream
  */
 @Public
 public class WindowedStream<T, K, W extends Window> {

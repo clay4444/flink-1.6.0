@@ -35,6 +35,8 @@ import java.util.concurrent.TimeUnit;
  * newly registered timeouts for the same key can be distinguished from older timeouts.
  *
  * @param <K> Type of the key
+ *
+ * Timer 提供了一种定时触发器的功能，通过 TimerService 接口注册 timer，触发的回调被封装为 Triggerable：
  */
 public class TimerService<K> {
 

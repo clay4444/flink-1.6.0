@@ -30,6 +30,8 @@ import org.apache.flink.streaming.runtime.tasks.ProcessingTimeCallback;
  * generates periodic watermarks.
  *
  * @param <T> The type of the input elements
+ *
+ * 在使用 AssignerWithPeriodicWatermarks 的情况下会生成一个 TimestampsAndPeriodicWatermarksOperator 算子，TimestampsAndPeriodicWatermarksOperator 会注册定时器，定期提交 watermark 到下游：
  */
 public class TimestampsAndPeriodicWatermarksOperator<T>
 		extends AbstractUdfStreamOperator<T, AssignerWithPeriodicWatermarks<T>>
@@ -53,6 +55,7 @@ public class TimestampsAndPeriodicWatermarksOperator<T>
 		currentWatermark = Long.MIN_VALUE;
 		watermarkInterval = getExecutionConfig().getAutoWatermarkInterval();
 
+		//注册一个定时器
 		if (watermarkInterval > 0) {
 			long now = getProcessingTimeService().getCurrentProcessingTime();
 			getProcessingTimeService().registerTimer(now + watermarkInterval, this);
@@ -67,9 +70,11 @@ public class TimestampsAndPeriodicWatermarksOperator<T>
 		output.collect(element.replace(element.getValue(), newTimestamp));
 	}
 
+	//定时器触发的回调函数
 	@Override
 	public void onProcessingTime(long timestamp) throws Exception {
 		// register next timer
+		//watermark 大于当前值，则提交
 		Watermark newWatermark = userFunction.getCurrentWatermark();
 		if (newWatermark != null && newWatermark.getTimestamp() > currentWatermark) {
 			currentWatermark = newWatermark.getTimestamp();

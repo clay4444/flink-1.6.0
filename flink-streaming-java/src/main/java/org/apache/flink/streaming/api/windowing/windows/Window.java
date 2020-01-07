@@ -26,6 +26,11 @@ import org.apache.flink.annotation.PublicEvolving;
  *
  * <p>Subclasses should implement {@code equals()} and {@code hashCode()} so that logically
  * same windows are treated the same.
+ *
+ * 窗口在 Flink 内部就是使用抽象类 Window 来表示，每一个窗口都有一个绑定的最大 timestamp，一旦时间超过这个值表明窗口结束了。
+ * Window 有两个具体实现类，分别为 TimeWindow 和 GlobalWindow：
+ * TimeWindow 就是时间窗口，每一个时间窗口都有开始时间和结束时间，可以对时间窗口进行合并操作（主要是在 Session Window 中）；
+ * GlobalWindow 是一个全局窗口，所有数据都属于该窗口，其最大 timestamp 是 Long.MAX_VALUE，使用单例模式。
  */
 @PublicEvolving
 public abstract class Window {

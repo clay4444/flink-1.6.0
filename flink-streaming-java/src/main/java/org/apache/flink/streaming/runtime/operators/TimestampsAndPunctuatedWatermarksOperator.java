@@ -29,6 +29,8 @@ import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
  * generates watermarks based on punctuation elements.
  *
  * @param <T> The type of the input elements
+ *
+ * 在使用 AssignerWithPunctuatedWatermarks 的时候，会生成一个 TimestampsAndPunctuatedWatermarksOperator 算子，会针对每个元素判断是否需要提交 watermark：
  */
 public class TimestampsAndPunctuatedWatermarksOperator<T>
 		extends AbstractUdfStreamOperator<T, AssignerWithPunctuatedWatermarks<T>>
@@ -46,11 +48,13 @@ public class TimestampsAndPunctuatedWatermarksOperator<T>
 	@Override
 	public void processElement(StreamRecord<T> element) throws Exception {
 		final T value = element.getValue();
+		//生成时间信息
 		final long newTimestamp = userFunction.extractTimestamp(value,
 				element.hasTimestamp() ? element.getTimestamp() : Long.MIN_VALUE);
 
 		output.collect(element.replace(element.getValue(), newTimestamp));
 
+		//判断是否需要提交 watermark
 		final Watermark nextWatermark = userFunction.checkAndGetNextWatermark(value, newTimestamp);
 		if (nextWatermark != null && nextWatermark.getTimestamp() > currentWatermark) {
 			currentWatermark = nextWatermark.getTimestamp();

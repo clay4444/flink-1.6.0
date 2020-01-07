@@ -25,6 +25,8 @@ import org.apache.flink.annotation.Internal;
  *
  * @param <K> Type of the keys to which timers are scoped.
  * @param <N> Type of the namespace to which timers are scoped.
+ *
+ * 触发的回调被封装为 Triggerable：
  */
 @Internal
 public interface Triggerable<K, N> {

@@ -95,6 +95,8 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  * @param <IN> The type of the incoming elements.
  * @param <OUT> The type of elements emitted by the {@code InternalWindowFunction}.
  * @param <W> The type of {@code Window} that the {@code WindowAssigner} assigns.
+ *
+ * Window 操作的主要处理逻辑在 WindowOperator 中。由于 window 的使用方式比较比较灵活，下面我们将先介绍最通用的窗口处理逻辑的实现，接着介绍窗口聚合函数的实现，最后介绍对可以合并的窗口的处理逻辑。
  */
 @Internal
 public class WindowOperator<K, IN, ACC, OUT, W extends Window>
@@ -178,6 +180,11 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
 
 	/**
 	 * Creates a new {@code WindowOperator} based on the given policies and user functions.
+	 * 主要依赖的对象
+	 * WindowAssigner
+	 * Trigger
+	 * StateDescriptor    是窗口状态的描述符，窗口的状态必须是 AppendingState 的子类
+	 * InternalWindowFunction    是窗口的计算函数  (ProcessWindowFunction 和 WindowFunction 会被包装成 InternalWindowFunction 的子类): 他们的效果在某些场景下是一致的，但 ProcessWindowFunction 能够提供更多的窗口上下文信息，并且在之后的版本中可能会移除 WindowFunction 接口：
 	 */
 	public WindowOperator(
 			WindowAssigner<? super IN, W> windowAssigner,
@@ -290,6 +297,9 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
 		windowAssignerContext = null;
 	}
 
+	/**
+	 * >>>>>> 核心方法：处理数据
+	 */
 	@Override
 	public void processElement(StreamRecord<IN> element) throws Exception {
 		final Collection<W> elementWindows = windowAssigner.assignWindows(
@@ -354,25 +364,28 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
 					throw new IllegalStateException("Window " + window + " is not in in-flight window set.");
 				}
 
-				windowState.setCurrentNamespace(stateWindow);
-				windowState.add(element.getValue());
+				windowState.setCurrentNamespace(stateWindow);  //用 window 作为 state 的 namespace
+				windowState.add(element.getValue());    //消息加入到状态中
 
 				triggerContext.key = key;
 				triggerContext.window = actualWindow;
 
+				//通过 Trigger.onElement() 判断是否触发窗口结果的计算
 				TriggerResult triggerResult = triggerContext.onElement(element);
 
 				if (triggerResult.isFire()) {
-					ACC contents = windowState.get();
+					ACC contents = windowState.get();  //获取窗口状态
 					if (contents == null) {
 						continue;
 					}
 					emitWindowContents(actualWindow, contents);
 				}
 
+				//是否需要清除窗口状态
 				if (triggerResult.isPurge()) {
 					windowState.clear();
 				}
+				//注册一个定时器，窗口结束后清理状态
 				registerCleanupTimer(actualWindow);
 			}
 
@@ -414,6 +427,8 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
 		// element not handled by any window
 		// late arriving tag has been set
 		// windowAssigner is event time and current timestamp + allowed lateness no less than element timestamp
+
+		// 迟到的数据
 		if (isSkippedElement && isElementLate(element)) {
 			if (lateDataOutputTag != null){
 				sideOutput(element);
@@ -632,6 +647,8 @@ public class WindowOperator<K, IN, ACC, OUT, W extends Window>
 	 * returned.
 	 *
 	 * @param window the window whose cleanup time we are computing.
+	 *
+	 * 注意，这里窗口的清理时间是 window.maxTimestamp + allowedLateness
 	 */
 	private long cleanupTime(W window) {
 		if (windowAssigner.isEventTime()) {

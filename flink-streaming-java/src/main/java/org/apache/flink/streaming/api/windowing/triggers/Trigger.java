@@ -50,6 +50,14 @@ import java.io.Serializable;
  *
  * @param <T> The type of elements on which this {@code Trigger} works.
  * @param <W> The type of {@link Window Windows} on which this {@code Trigger} can operate.
+ *
+ * Trigger 用来确定一个窗口是否应该触发结果的计算，Trigger提供了一系列的回调函数，根据回调函数返回的结果来决定是否应该触发窗口的计算。
+ *
+ * Flink 提供了一些内置的 Trigger 实现，这些 Trigger 内部往往配合 timer 定时器进行使用，例如
+ * EventTimeTrigger 是所有事件时间窗口的默认触发器，ProcessingTimeTrigger 是所有处理时间窗口的默认触发器，
+ * ContinuousEventTimeTrigger 和 ContinuousProcessingTimeTrigger 定期进行触发，
+ * CountTrigger 按照窗口内元素个数进行触发，
+ * DeltaTrigger 按照 DeltaFunction 进行触发，NeverTrigger 主要在全局窗口中使用，永远不会触发。
  */
 @PublicEvolving
 public abstract class Trigger<T, W extends Window> implements Serializable {

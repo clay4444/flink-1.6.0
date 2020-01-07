@@ -39,6 +39,12 @@ import java.util.Collection;
  *
  * @param <T> The type of elements that this WindowAssigner can assign windows to.
  * @param <W> The type of {@code Window} that this assigner assigns.
+ *
+ * WindowAssigner 确定每一条消息属于哪些窗口，一条消息可能属于多个窗口（如在滑动窗口中，窗口之间可能有重叠）；
+ * MergingWindowAssigner 是 WindowAssigner 的抽象子类，主要是提供了对时间窗口的合并功能。窗口合并的逻辑在 TimeWindow 提供的工具方法 mergeWindows(Collection<TimeWindow> windows, MergingWindowAssigner.MergeCallback<TimeWindow> c) 中，会对所有窗口按开始时间排序，存在重叠的窗口就可以进行合并。
+ *
+ * 根据窗口类型和时间属性的不同，有不同的 WindowAssigner 的具体实现，
+ * 如TumblingEventTimeWindows, TumblingProcessingTimeWindows, SlidingEventTimeWindows, SlidingProcessingTimeWindows, EventTimeSessionWindows, ProcessingTimeSessionWindows, DynamicEventTimeSessionWindows, DynamicProcessingTimeSessionWindows, 以及 GlobalWindows。具体的实现逻辑这里就不赘述了。
  */
 @PublicEvolving
 public abstract class WindowAssigner<T, W extends Window> implements Serializable {

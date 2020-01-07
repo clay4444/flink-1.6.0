@@ -38,12 +38,14 @@ import java.util.Set;
 /**
  * A {@link Window} that represents a time interval from {@code start} (inclusive) to
  * {@code end} (exclusive).
+ *
+ * TimeWindow 就是时间窗口，每一个时间窗口都有开始时间和结束时间，可以对时间窗口进行合并操作（主要是在 Session Window 中）；
  */
 @PublicEvolving
 public class TimeWindow extends Window {
 
-	private final long start;
-	private final long end;
+	private final long start;  //开始时间
+	private final long end;   //结束时间
 
 	public TimeWindow(long start, long end) {
 		this.start = start;

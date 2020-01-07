@@ -31,6 +31,9 @@ import java.util.concurrent.ScheduledFuture;
 
 /**
  * Source contexts for various stream time characteristics.
+ *
+ * 在 SourceFunction 中，可以通过 SourceContext 接口提供的 SourceContext.collectWithTimestamp(T element, long timestamp) 提交带有时间戳的消息，
+ * 通过 SourceContext.emitWatermark(Watermark mark) 提交 watermark。SourceContext 有几种不同的实现，根据时间属性的设置，会自动选择不同的 SourceContext。
  */
 public class StreamSourceContexts {
 
@@ -54,6 +57,10 @@ public class StreamSourceContexts {
 
 		final SourceFunction.SourceContext<OUT> ctx;
 		switch (timeCharacteristic) {
+
+			/**
+			 * 如果时间属性被设置为 TimeCharacteristic#EventTime，那么通过 ManualWatermarkContext 提交的 StreamRecord 就会包含时间戳，watermark 也会正常提交。
+			 */
 			case EventTime:
 				ctx = new ManualWatermarkContext<>(
 					output,
@@ -63,6 +70,10 @@ public class StreamSourceContexts {
 					idleTimeout);
 
 				break;
+
+			/**
+			 * 比较特殊的是 TimeCharacteristic#IngestionTime，AutomaticWatermarkContext 会使用系统当前时间作为 StreamRecord 的时间戳，并定期提交 watermark，从而实现 IngestionTime 的效果。
+			 */
 			case IngestionTime:
 				ctx = new AutomaticWatermarkContext<>(
 					output,
@@ -73,6 +84,10 @@ public class StreamSourceContexts {
 					idleTimeout);
 
 				break;
+
+			/**
+			 * 如果系统时间属性被设置为 TimeCharacteristic#ProcessingTime，那么 NonTimestampContext 会忽略掉时间戳和watermark；
+			 */
 			case ProcessingTime:
 				ctx = new NonTimestampContext<>(checkpointLock, output);
 				break;

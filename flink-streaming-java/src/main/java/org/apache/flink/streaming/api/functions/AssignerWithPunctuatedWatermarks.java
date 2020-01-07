@@ -63,6 +63,8 @@ import javax.annotation.Nullable;
  * @param <T> The type of the elements to which this assigner assigns timestamps.
  *
  * @see org.apache.flink.streaming.api.watermark.Watermark
+ *
+ * 依赖于数据流中的特殊元素来生成 watermark
  */
 public interface AssignerWithPunctuatedWatermarks<T> extends TimestampAssigner<T> {
 

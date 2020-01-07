@@ -316,3 +316,83 @@ MemoryBackendCheckpointStorage 会将所有算子的检查点状态存储在 Job
 所谓本地状态存储，即在存储检查点快照时，在 Task 所在的 TaskManager 本地文件系统中存储一份副本，这样在进行状态恢复时可以优先从本地状态进行恢复，从而减少网络数据传输的开销。本地状态存储仅针对 keyed state;
 
 
+### 时间、定时器和窗口
+
+##### Trigger
+触发器（Trigger）提供了一种灵活的机制来决定窗口的计算结果在什么时候对外输出。理论上来说，只有两种类型的触发器，大部分的应用都是选择其一或组合使用：
+1. Repeated update triggers：重复更新窗口的计算结果，更新可以是由新消息到达时触发，也可以是每隔一段时间（如1分钟）进行触发
+2. Completeness triggers：在窗口结束时进行触发，这是更符合直觉的使用方法，也和批处理模式的计算结果相吻合。但是需要一种机制来衡量一个窗口的所有消息都已经被正确地处理了。
+
+##### watermark
+是事件时间域中衡量输入完成进度的一种时间概念；
+生成一个消息流的 event time 和 watermark 的两种方式
+1. 在数据源中直接生成 (SourceFunction函数中)
+在 SourceFunction 中，可以通过 SourceContext 接口提供的 SourceContext.collectWithTimestamp(T element, long timestamp) 提交带有时间戳的消息，
+通过 SourceContext.emitWatermark(Watermark mark) 提交 watermark。
+SourceContext 有几种不同的实现，根据时间属性的设置，会自动选择不同的 SourceContext。
+    1. TimeCharacteristic#ProcessingTime，那么 NonTimestampContext 会忽略掉时间戳和watermark；
+    2. TimeCharacteristic#EventTime，那么通过 ManualWatermarkContext 提交的StreamRecord就会包含时间戳，watermark也会正常提交
+    3. TimeCharacteristic#IngestionTime，AutomaticWatermarkContext 会使用系统当前时间作为StreamRecord的时间戳，并定期提交watermark，从而实现IngestionTime的效果
+
+2. 通过 Timestamp Assigners / Watermark Generators   (一般是从消息中提取出时间字段)
+通过 DataStream.assignTimestampsAndWatermarks(AssignerWithPeriodicWatermarks) 
+和   DataStream.assignTimestampsAndWatermarks(AssignerWithPunctuatedWatermarks) 
+方法来自定义提取 timstamp 和生成 watermark 的逻辑。
+    1. AssignerWithPeriodicWatermarks 会定期生成watermark信息，会生成一个TimestampsAndPeriodicWatermarksOperator算子，会注册定时器，定期提交watermark到下游
+    2. AssignerWithPunctuatedWatermarks 一般依赖于数据流中的特殊元素来生成watermark，会生成一个TimestampsAndPunctuatedWatermarksOperator算子，会针对每个元素判断是否需要提交watermark：
+
+##### 窗口
+
+1. Window
+窗口在Flink内部就是使用抽象类Window来表示，每一个窗口都有一个绑定的最大timestamp，一旦时间超过这个值表明窗口结束了。
+Window有两个具体实现类，分别为TimeWindow和GlobalWindow：TimeWindow就是时间窗口，每一个时间窗口都有开始时间和结束时间，可以对时间窗口进行合并操作（主要是在 Session Window 中）；
+GlobalWindow 是一个全局窗口，所有数据都属于该窗口，其最大timestamp是Long.MAX_VALUE，使用单例模式。
+
+2. WindowAssigner
+WindowAssigner确定每一条消息属于哪些窗口，一条消息可能属于多个窗口（如在滑动窗口中，窗口之间可能有重叠）；
+MergingWindowAssigner 是WindowAssigner的抽象子类，主要是提供了对时间窗口的合并功能。窗口合并的逻辑在TimeWindow提供的工具方法 mergeWindows(Collection<TimeWindow> windows, MergingWindowAssigner.MergeCallback<TimeWindow> c) 中，会对所有窗口按开始时间排序，存在重叠的窗口就可以进行合并。
+
+根据窗口类型和时间属性的不同，有不同的WindowAssigner的具体实现，如TumblingEventTimeWindows, TumblingProcessingTimeWindows, SlidingEventTimeWindows, SlidingProcessingTimeWindows, EventTimeSessionWindows, ProcessingTimeSessionWindows, DynamicEventTimeSessionWindows, DynamicProcessingTimeSessionWindows, 以及GlobalWindows。具体的实现逻辑这里就不赘述了。
+
+3. Trigger
+Trigger用来确定一个窗口是否应该触发结果的计算，Trigger提供了一系列的回调函数，根据回调函数返回的结果来决定是否应该触发窗口的计算。
+Flink 提供了一些内置的Trigger实现，这些Trigger内部往往配合timer定时器进行使用，例如 EventTimeTrigger 是所有事件时间窗口的默认触发器，ProcessingTimeTrigger 是所有处理时间窗口的默认触发器，ContinuousEventTimeTrigger 和 ContinuousProcessingTimeTrigger 定期进行触发，CountTrigger 按照窗口内元素个数进行触发，DeltaTrigger 按照 DeltaFunction 进行触发，NeverTrigger 主要在全局窗口中使用，永远不会触发。
+
+4. ProcessWindowFunction 和  WindowFunction 的区别
+他们的效果在某些场景下是一致的，但 ProcessWindowFunction 能够提供更多的窗口上下文信息，并且在之后的版本中可能会移除 WindowFunction 接口：
+
+5. WindowOperator
+Window 操作的主要处理逻辑在WindowOperator中。其中有几个比较核心的对象
+WindowAssigner
+Trigger
+StateDescriptor    是窗口状态的描述符，窗口的状态必须是 AppendingState 的子类
+InternalWindowFunction   是窗口的计算函数  (ProcessWindowFunction 和 WindowFunction 会被包装成 InternalWindowFunction 的子类): 
+
+6. Window 使用的状态
+ListState
+
+7. 窗口的处理逻辑
+    1. 通过 WindowAssigner 确定消息所在的窗口（可能属于多个窗口）
+    2. 将消息加入到对应窗口的状态中
+    3. 根据 Trigger.onElement 确定是否应该触发窗口结果的计算，如果使用 InternalWindowFunction 对窗口进行处理
+    4. 注册一个定时器，在窗口结束时清理窗口状态
+    5. 如果消息太晚到达，提交到 side output 中
+
+8. 增量窗口聚合
+在使用 ProcessWindowFunction 来对窗口进行操作的一个重要缺陷是，需要把整个窗口内的所有消息全部缓存在 ListState 中，这无疑会导致性能问题。
+如果窗口的计算逻辑支持增量聚合操作，那么可以使用 ReduceFunction, AggregateFunction 或 FoldFunction 进行增量窗口聚合计算，这可以在很大程度上解决 ProcessWindowFunction 的性能问题。
+
+如果使用了增量聚合函数，那么窗口的状态就不再是以 ListState 的形式保存窗口中的所有元素，而是 AggregatingState。
+这样，每当窗口中新消息到达时，在将消息添加到状态中的同时就会触发聚合函数的计算，这样在状态中就只需要保存聚合后的状态即可。
+
+在直接使用AggregateFunction的情况下，用户代码中无法访问窗口的上下文信息。为了解决这个问题，
+可以将增量聚合函数和 ProcessWindowFunction 结合在一起使用，这样在提交窗口计算结果时也可以访问到窗口的上下文信息：
+
+
+9. Evictor
+Flink 的窗口操作还提供了一个可选的evitor，允许在调用InternalWindowFunction计算窗口结果之前或之后移除窗口中的元素。
+在这种情况下，就不能对窗口进行增量聚合操作了，窗口内的所有元素必须保存在 ListState 中，因而对性能会有一定影响。
+举例：CountEvictor
+
+
+

@@ -49,6 +49,8 @@ import javax.annotation.Nullable;
  * @param <T> The type of the elements to which this assigner assigns timestamps.
  *
  * @see org.apache.flink.streaming.api.watermark.Watermark
+ *
+ * 会定期生成 watermark 信息
  */
 public interface AssignerWithPeriodicWatermarks<T> extends TimestampAssigner<T> {
 

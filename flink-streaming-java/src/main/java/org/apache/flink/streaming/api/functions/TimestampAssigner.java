@@ -29,6 +29,9 @@ import org.apache.flink.api.common.functions.Function;
  * (midnight, January 1, 1970 UTC).
  *
  * @param <T> The type of the elements to which this assigner assigns timestamps.
+ *
+ * AssignerWithPeriodicWatermarks 和 AssignerWithPunctuatedWatermarks 都继承了 TimestampAssigner 接口：
+ * 这个接口的作用就是定义一种从数据流中提取时间戳和watermark的方式
  */
 public interface TimestampAssigner<T> extends Function {
 
