@@ -394,3 +394,58 @@ Flink 的窗口操作还提供了一个可选的evitor，允许在调用Internal
 在这种情况下，就不能对窗口进行增量聚合操作了，窗口内的所有元素必须保存在 ListState 中，因而对性能会有一定影响。
 举例：CountEvictor
 
+
+### 知识点总结
+
+1. Flink分区策略 (最上层是ChannelSelector接口，源码解析对应到了数据输出RecordWriter中)
+    1. GlobalPartitioner 数据会被分发到下游算子的第一个实例中进行处理。
+    2. ShufflePartitioner 数据会被随机分发到下游算子的每一个实例中进行处理。
+    3. RebalancePartitioner 数据会被循环发送到下游的每一个实例中进行处理。
+    4. RescalePartitioner 这种分区器会根据上下游算子的并行度，循环的方式输出到下游算子的每个实例。这里有点难以理解，假设上游并行度为2，编号为A和B。下游并行度为4，编号为1，2，3，4。那么A则把数据循环发送给1和2，B则把数据循环发送给3和4。假设上游并行度为4，编号为A，B，C，D。下游并行度为2，编号为1，2。那么A和B则把数据发送给1，C和D则把数据发送给2。
+    5. BroadcastPartitioner 广播分区会将上游数据输出到下游算子的每个实例中。适合于大数据集和小数据集做Join的场景。
+    6. KeyGroupStreamPartitioner 是一个Hash分区器。会将数据按Key的Hash值输出到下游算子实例中。
+    7. CustomPartitionerWrapper 用户自定义分区器。需要用户自己实现Partitioner接口，来定义自己的分区逻辑
+    9. **ForwardPartitioner** 直接把元素转发给下游，在用户没有指定partitoner，且上下游算子的并行度一致的时候，数据的分区策略会被自动指定为 ForwardPartitioner
+
+2. Slot和parallelism有什么区别？
+    1. slot是指taskmanager的并发执行能力，假设我们将taskmanager.numberOfTaskSlots配置为3那么每一个tm中分配3个TaskSlot, 3个 taskmanager 一共有9个TaskSlot。
+    2. parallelism是指tm实际使用的并发能力。假设我们把parallelism.default设置为1，那么9个TaskSlot只能用1个，有8个空闲。
+    **注意这种说的是在没设置slotSharingGroup的情况下**
+
+3. OperatorChain 的 chain 策略
+    1. ALWAYS: 可以与上下游链接，map、flatmap、filter等默认是ALWAYS，也就是说每个算子都有自己的chain策略
+    2. HEAD：只能与下游链接，不能与上游链接，Source默认是HEAD,
+    
+4. 两个operator可以chain在一起的条件
+    1. 上下游的并行度一致
+    2. 下游节点的入度为1 （也就是说下游节点没有来自其他节点的输入）
+    3. 上下游节点都在同一个slot group中（下面会解释 slot group）
+    4. 下游节点的chain策略为ALWAYS（可以与上下游链接，map、flatmap、filter等默认是ALWAYS）
+    5. 上游节点的chain策略为ALWAYS或HEAD（只能与下游链接，不能与上游链接，Source默认是HEAD）
+    6. 两个节点间数据分区方式是 forward
+    7. 用户没有禁用 chain
+
+5. slot共享(默认情况下，Flink允许subtasks共享slot，条件是它们都来自同一个Job的不同task的subtask。结果可能一个slot持有该job的整个pipeline)
+    1. Flink 集群所需的task slots数与job中最高的并行度一致。也就是说我们不需要再去计算一个程序总共会起多少个slot了。
+    2. 更容易获得更充分的资源利用。如果没有slot共享，那么非密集型操作source/flatmap就会占用同密集型操作 keyAggregation/sink 一样多的资源。如果有slot共享，将keyAggregation/sink的2个并行度增加到6个，能充分利用slot资源，同时保证每个TaskManager能平均分配到重的subtasks。
+
+6. 重启策略
+    1. 固定延迟重启策略（Fixed Delay Restart Strategy）
+    2. 故障率重启策略（Failure Rate Restart Strategy）
+    3. 没有重启策略（No Restart Strategy）
+    4. Fallback重启策略（Fallback Restart Strategy）
+
+7. 广播变量
+    1. 广播出去的变量存在于每个节点的内存中，所以这个数据集不能太大。因为广播出去的数据，会常驻内存，除非程序执行结束
+    2. 广播变量在初始化广播出去以后不支持修改，这样才能保证每个节点的数据都是一致的
+    3. 实现的原理其实就和上面提到的分区策略中的 BroadcastPartitioner 相关
+    
+8. window出现数据倾斜的解决办法
+    1. 在数据进入窗口前做预聚合
+    2. 重新设计窗口聚合的key
+
+9. Flink中在使用聚合函数GroupBy、Distinct、KeyBy等函数时出现数据热点该如何解决
+    1. 在业务上规避这类问题，例如一个假设订单场景，北京和上海两个城市订单量增长几十倍，其余城市的数据量不变。这时候我们在进行聚合的时候，北京和上海就会出现数据堆积，我们可以单独处理北京和上海的数据。
+    2. Key的设计上，把热key进行拆分，比如上个例子中的北京和上海，可以把北京和上海按照地区进行拆分聚合。
+    3. 参数设置，MiniBatch，微批处理
+
