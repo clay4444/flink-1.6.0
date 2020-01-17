@@ -395,7 +395,7 @@ Flink 的窗口操作还提供了一个可选的evitor，允许在调用Internal
 举例：CountEvictor
 
 
-### 知识点总结
+### 问题总结
 
 1. Flink分区策略 (最上层是ChannelSelector接口，源码解析对应到了数据输出RecordWriter中)
     1. GlobalPartitioner 数据会被分发到下游算子的第一个实例中进行处理。
@@ -407,7 +407,7 @@ Flink 的窗口操作还提供了一个可选的evitor，允许在调用Internal
     7. CustomPartitionerWrapper 用户自定义分区器。需要用户自己实现Partitioner接口，来定义自己的分区逻辑
     9. **ForwardPartitioner** 直接把元素转发给下游，在用户没有指定partitoner，且上下游算子的并行度一致的时候，数据的分区策略会被自动指定为 ForwardPartitioner
 
-2. Slot和parallelism有什么区别？
+2. Slot和parallelism的区别
     1. slot是指taskmanager的并发执行能力，假设我们将taskmanager.numberOfTaskSlots配置为3那么每一个tm中分配3个TaskSlot, 3个 taskmanager 一共有9个TaskSlot。
     2. parallelism是指tm实际使用的并发能力。假设我们把parallelism.default设置为1，那么9个TaskSlot只能用1个，有8个空闲。
     **注意这种说的是在没设置slotSharingGroup的情况下**
@@ -444,7 +444,7 @@ Flink 的窗口操作还提供了一个可选的evitor，允许在调用Internal
     1. 在数据进入窗口前做预聚合
     2. 重新设计窗口聚合的key
 
-9. Flink中在使用聚合函数GroupBy、Distinct、KeyBy等函数时出现数据热点该如何解决
+9. 在使用聚合函数GroupBy、Distinct、KeyBy等函数时出现数据热点该如何解决
     1. 在业务上规避这类问题，例如一个假设订单场景，北京和上海两个城市订单量增长几十倍，其余城市的数据量不变。这时候我们在进行聚合的时候，北京和上海就会出现数据堆积，我们可以单独处理北京和上海的数据。
     2. Key的设计上，把热key进行拆分，比如上个例子中的北京和上海，可以把北京和上海按照地区进行拆分聚合。
     3. 参数设置，MiniBatch，微批处理
